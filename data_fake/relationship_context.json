@@ -1,0 +1,17 @@
+{
+    "WORK_ON":
+        [
+            "id_person",
+            "id_project",
+            "start_date",
+            "end_date"
+        ],
+        "WORKS_FOR":
+        [
+            "id_person",
+            "id_company",
+            "start_date",
+            "end_date"
+        ]
+
+}

@@ -1,0 +1,17 @@
+{
+        "Person":
+        [
+            "id_person",
+            "name"
+        ],
+        "Project":
+        [
+            "id_project",
+            "title"
+        ],
+    "Company":
+        [
+            "id_company",
+            "name"
+        ]
+}

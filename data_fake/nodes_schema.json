@@ -1,0 +1,26 @@
+{
+    "data_fake/nodes/persons.csv": [
+        "Person",
+        [
+            "id_person",
+            "name"
+        ],
+        "id_person"
+    ],
+    "data_fake/nodes/projects.csv": [
+        "Project",
+        [
+            "id_project",
+            "title"
+        ],
+        "id_project"
+    ],
+    "data_fake/nodes/companies.csv": [
+        "Company",
+        [
+            "id_company",
+            "name"
+        ],
+        "id_company"
+    ]
+}

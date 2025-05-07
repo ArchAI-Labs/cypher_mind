@@ -1,0 +1,29 @@
+{
+    "data_fake/relations/work_on.csv": [
+        "WORK_ON",
+        "Person",
+        "Project",
+        [
+            "id_person",
+            "id_project"
+        ],
+        [
+            "start_date",
+            "end_date"
+        ]
+    ],
+    "data_fake/relations/works_for.csv": [
+        "WORKS_FOR",
+        "Person",
+        "Company",
+        [
+            "id_person",
+            "id_company"
+        ],
+        [
+            "start_date",
+            "end_date"
+        ]
+    ]
+
+}
