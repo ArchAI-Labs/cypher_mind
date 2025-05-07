@@ -39,11 +39,12 @@ class SemanticCache:
         print("Semantic Cache Initialized")
 
         supported_models = [x["model"] for x in TextEmbedding.list_supported_models()]
-        if os.environ.get("EMBEDDER") in supported_models:
-            #print(f"The model '{os.environ.get("EMBEDDER")}' is already registred.")
+        embedder_model = os.environ.get("EMBEDDER")
+        if embedder_model in supported_models:
+            print(f"The model {embedder_model} is already registred.")
             self.model = TextEmbedding(model_name=self.embedder)
         else:
-            #print(f"The model '{os.environ.get("EMBEDDER")}' isn't already registred.")
+            print(f"The model {embedder_model} isn't already registred.")
             TextEmbedding.add_custom_model(
                 model=self.embedder,
                 pooling=PoolingType.MEAN,
