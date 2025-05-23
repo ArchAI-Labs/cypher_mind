@@ -3,8 +3,11 @@ from dotenv import load_dotenv
 import json
 
 from neo4j import GraphDatabase
-from google import genai
-from google.genai import types
+
+from litellm import completion
+# import litellm
+
+# litellm._turn_on_debug()
 
 load_dotenv()
 
@@ -13,7 +16,7 @@ user = os.environ.get("NEO4J_USER")
 password = os.environ.get("NEO4J_PASSWORD")
 
 gemini_api_key = os.environ.get("GEMINI_API_KEY")
-client = genai.Client(api_key=gemini_api_key)
+# client = genai.Client(api_key=gemini_api_key)
 
 
 def get_schema(nodes, relations):
@@ -44,21 +47,22 @@ def get_schema(nodes, relations):
                     - ...
             ```
         """
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt},
+        ]
 
-        response = client.models.generate_content(
+        response = completion(
             model=os.environ.get("MODEL"),
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                system_instruction=system_prompt,
-                # max_output_tokens=2048,
-                top_k=2,
-                top_p=0.5,
-                temperature=0.2,
-                seed=42,
-            ),
-        )
-
-        return response.text
+            messages=messages,
+            max_completion_tokens=2048,
+            top_k=2,
+            top_p=0.5,
+            temperature=0.2,
+            )
+        
+        
+        return response.choices[0].message.content
 
     except Exception as e:
         return f"An error occurred: {e}"
@@ -104,19 +108,19 @@ def ask_neo4j_gemini(question, data_schema):
         Generates a robust Cypher query for the Neo4j database.
         """
 
-        response = client.models.generate_content(
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt},
+        ]
+        response = completion(
             model=os.environ.get("MODEL"),
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                system_instruction=system_prompt,
-                max_output_tokens=2048,
-                top_k=2,
-                top_p=0.5,
-                temperature=0.2,
-                seed=42,
-            ),
-        )
-        cypher_query = response.text.removeprefix("```cypher").removesuffix("```")
+            messages=messages,
+            max_completion_tokens=2048,
+            top_k=2,
+            top_p=0.5,
+            temperature=0.2,
+            )
+        cypher_query = response.choices[0].message.content.removeprefix("```cypher").removesuffix("```")
 
         while "```" in cypher_query:
             cypher_query = cypher_query.replace("```", "")
