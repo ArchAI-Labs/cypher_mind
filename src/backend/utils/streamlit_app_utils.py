@@ -7,7 +7,11 @@ def format_results_as_table(results):
     Converts JSON results to a more readable table format.
     Handles upper/lower case and formatting for better display.
     """
-    table_data = []
+    if not results: # Gestisce il caso di risultati vuoti
+        return []
+
+    all_keys = set()
+    processed_rows = []
     for row in results:
         new_row = {}
         for key, value in row.items():
@@ -16,11 +20,18 @@ def format_results_as_table(results):
                 for k, v in value.items():
                     formatted_sub_key = f"{formatted_key} - {k.title()}"
                     new_row[formatted_sub_key] = v
+                    all_keys.add(formatted_sub_key)
             else:
                 new_row[formatted_key] = value
-        table_data.append(new_row)
-    return table_data
+                all_keys.add(formatted_key)
+        processed_rows.append(new_row)
 
+    table_data = []
+    for row_dict in processed_rows:
+        complete_row = {key: row_dict.get(key) for key in sorted(list(all_keys))}
+        table_data.append(complete_row)
+
+    return table_data
 
 def generate_sample_questions():
     sample_q_url = os.environ.get("SAMPLE_QUESTIONS")
