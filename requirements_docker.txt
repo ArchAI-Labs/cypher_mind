@@ -1,5 +1,5 @@
 neo4j==5.28.1
 python-dotenv==1.1.0
-google-genai>=1.8.0
 qdrant-client==1.13.3
 fastembed==0.6.0
+litellm==1.70.4
