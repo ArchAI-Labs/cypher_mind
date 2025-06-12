@@ -138,3 +138,50 @@ def ask_neo4j_gemini(question, data_schema):
 
     except Exception as e:
         return f"An error occurred: {e}"
+
+def create_projection(graph_name, node_labels, relationship_types):
+    """Crea una proiezione del grafo in Neo4j GDS."""
+
+    print(graph_name)
+    print(node_labels)
+    print(relationship_types)
+    
+    try:
+        with GraphDatabase.driver(uri, auth=(user, password)) as driver:
+            with driver.session() as session:
+                query = f"""
+                CALL gds.graph.project(
+                    $graph_name,
+                    $node_labels,
+                    $relationship_types
+                )
+                YIELD graphName, nodeProjection, nodeCount, relationshipProjection, relationshipCount
+                """
+                result = session.run(
+                    query,
+                    graph_name=graph_name,
+                    node_labels=node_labels,
+                    relationship_types=relationship_types
+                )
+                record = result.single()
+                if record:
+                    print(f"Proiezione '{record['graphName']}' creata con successo.")
+                else:
+                    print("Errore durante la creazione della proiezione.")
+    except Exception as e:
+        return f"Errore: {e}"
+
+def delete_all_projections():
+    """Elimina tutte le proiezioni del grafo in Neo4j GDS."""
+    try:
+        with GraphDatabase.driver(uri, auth=(user, password)) as driver:
+            with driver.session() as session:
+                query = "CALL gds.graph.list() YIELD graphName RETURN graphName ORDER BY graphName ASC"
+                result = session.run(query)
+                for record in result:
+                    graph_name = record["graphName"]
+                    delete_query = f"CALL gds.graph.drop('{graph_name}',false) YIELD graphName"
+                    session.run(delete_query)
+                print("Tutte le proiezioni sono state eliminate.")
+    except Exception as e:
+        print(f"Errore durante l'eliminazione delle proiezioni: {e}")

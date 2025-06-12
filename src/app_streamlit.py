@@ -4,7 +4,12 @@ import json
 import streamlit as st
 import pandas as pd
 
-from backend.gemini import ask_neo4j_gemini, get_schema
+from backend.gemini import (
+    ask_neo4j_gemini,
+    get_schema,
+    delete_all_projections,
+    create_projection,
+)
 from backend.utils.streamlit_app_utils import (
     format_results_as_table,
     generate_sample_questions,
@@ -142,6 +147,31 @@ def main():
                     vector_size=os.environ.get("VECTOR_SIZE"),
                 )
                 st.success("Semantic cache successfully reset!")
+
+        with st.sidebar.expander("Create Graph Projection"):
+            graph_name = st.sidebar.text_input("Projection Name")
+            node_labels = st.sidebar.text_area("Node Labels (sepatared by comma)")
+            relationship_types = st.sidebar.text_area(
+                "Relationship Type (sepatared by comma)"
+            )
+
+            if st.sidebar.button("Create Projection"):
+                node_labels_list = [label.strip() for label in node_labels.split(",")]
+                relationship_types_list = [
+                    rel.strip() for rel in relationship_types.split(",")
+                ]
+
+                if graph_name and node_labels_list and relationship_types_list:
+                    create_projection(
+                        graph_name, node_labels_list, relationship_types_list
+                    )
+                elif graph_name and node_labels_list:
+                    create_projection(graph_name, node_labels_list)
+                else:
+                    st.sidebar.warning("Please fill in all fields.")
+
+            if st.sidebar.button("Delete All Projections"):
+                delete_all_projections()
 
         if st.button("Run"):
             if question:
