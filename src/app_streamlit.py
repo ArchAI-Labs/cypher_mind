@@ -6,10 +6,10 @@ import pandas as pd
 
 from backend.gemini import (
     ask_neo4j_gemini,
-    get_schema,
-    delete_all_projections,
-    create_projection,
+    get_schema
 )
+from backend.gds_manager import GDSManager
+
 from backend.utils.streamlit_app_utils import (
     format_results_as_table,
     generate_sample_questions,
@@ -100,6 +100,13 @@ def main():
             embedder=os.environ.get("EMBEDDER"),
             vector_size=os.environ.get("VECTOR_SIZE"),
         )
+    
+    if "gds" not in st.session_state:
+        st.session_state.gds = GDSManager(
+            uri=os.environ["NEO4J_URI"],
+            user=os.environ["NEO4J_USER"],
+            password=os.environ["NEO4J_PASSWORD"]
+        )
 
     col1, col2 = st.columns([3, 1])
 
@@ -149,29 +156,66 @@ def main():
                 st.success("Semantic cache successfully reset!")
 
         with st.sidebar.expander("Create Graph Projection"):
-            graph_name = st.sidebar.text_input("Projection Name")
-            node_labels = st.sidebar.text_area("Node Labels (sepatared by comma)")
-            relationship_types = st.sidebar.text_area(
-                "Relationship Type (sepatared by comma)"
+            graph_name = st.text_input("Projection Name")
+            node_labels_input = st.text_area("Node Labels (separated by commas)")
+            relationship_types_input = st.text_area("Relationship Types (separated by commas)")
+
+            if st.button("Create Projection"):
+                gds = st.session_state.gds
+
+                node_labels_list = [label.strip() for label in node_labels_input.split(",") if label.strip()]
+                relationship_types_list = [rel.strip() for rel in relationship_types_input.split(",") if rel.strip()]
+
+                if not graph_name:
+                    st.warning("⚠️ Please enter a projection name.")
+                elif not node_labels_list:
+                    st.warning("⚠️ Please enter at least one node label.")
+                elif not relationship_types_list:
+                    st.warning("⚠️ Please enter at least one relationship type.")
+                else:
+                    with st.spinner("Creating graph projection..."):
+                        msg = gds.create_projection(graph_name, node_labels_list, relationship_types_list)
+                        st.success(msg if "✅" in msg else msg)
+
+            if st.button("Delete All Projections"):
+                with st.spinner("Deleting all GDS projections..."):
+                    msg = st.session_state.gds.delete_all_projections()
+                    st.success(msg if "✅" in msg else msg)
+            
+        with st.sidebar.expander("Run GDS Algorithm"):
+            gds_graph_name = st.text_input("Graph name for GDS algorithm")
+
+            algo = st.selectbox(
+                "Choose GDS Algorithm",
+                ["PageRank", "Betweenness Centrality", "Closeness Centrality", "Louvain", "Node Similarity"]
             )
 
-            if st.sidebar.button("Create Projection"):
-                node_labels_list = [label.strip() for label in node_labels.split(",")]
-                relationship_types_list = [
-                    rel.strip() for rel in relationship_types.split(",")
-                ]
-
-                if graph_name and node_labels_list and relationship_types_list:
-                    create_projection(
-                        graph_name, node_labels_list, relationship_types_list
-                    )
-                elif graph_name and node_labels_list:
-                    create_projection(graph_name, node_labels_list)
+            if st.button("Run Algorithm"):
+                if not gds_graph_name:
+                    st.sidebar.warning("Please provide a graph projection name.")
                 else:
-                    st.sidebar.warning("Please fill in all fields.")
+                    with st.spinner(f"Running {algo} on {gds_graph_name}..."):
+                        gds = st.session_state.gds
 
-            if st.sidebar.button("Delete All Projections"):
-                delete_all_projections()
+                        if algo == "PageRank":
+                            gds_results = gds.run_pagerank(gds_graph_name)
+                        elif algo == "Betweenness Centrality":
+                            gds_results = gds.run_betweenness(gds_graph_name)
+                        elif algo == "Closeness Centrality":
+                            gds_results = gds.run_closeness(gds_graph_name)
+                        elif algo == "Louvain":
+                            gds_results = gds.run_louvain(gds_graph_name)
+                        elif algo == "Node Similarity":
+                            gds_results = gds.run_similarity(gds_graph_name)
+                        else:
+                            gds_results = [{"error": "Unknown algorithm selected."}]
+
+                        if isinstance(gds_results, list) and "error" in gds_results[0]:
+                            st.error(gds_results[0]["error"])
+                        else:
+                            st.subheader(f"Results of {algo}:")
+                            df = pd.DataFrame(gds_results)
+                            st.dataframe(df)
 
         if st.button("Run"):
             if question:
