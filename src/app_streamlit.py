@@ -4,7 +4,7 @@ import json
 import streamlit as st
 import pandas as pd
 
-from backend.gemini import (
+from backend.llm import (
     ask_neo4j_gemini,
     get_schema
 )
@@ -130,6 +130,7 @@ def main():
         with open(os.environ.get("REL_CONTEXT_URL"), "r") as file:
             relationship = json.load(file)
 
+        st.session_state.gds.get_schema(nodes)
         graph_schema = get_schema(nodes=nodes, relations=relationship)
 
         with st.sidebar.expander("Advanced Options"):
@@ -198,15 +199,15 @@ def main():
                         gds = st.session_state.gds
 
                         if algo == "PageRank":
-                            gds_results = gds.run_pagerank(gds_graph_name)
+                            gds_results = st.session_state.gds.run_pagerank(gds_graph_name)
                         elif algo == "Betweenness Centrality":
-                            gds_results = gds.run_betweenness(gds_graph_name)
+                            gds_results = st.session_state.gds.run_betweenness(gds_graph_name)
                         elif algo == "Closeness Centrality":
-                            gds_results = gds.run_closeness(gds_graph_name)
+                            gds_results = st.session_state.gds.run_closeness(gds_graph_name)
                         elif algo == "Louvain":
-                            gds_results = gds.run_louvain(gds_graph_name)
+                            gds_results = st.session_state.gds.run_louvain(gds_graph_name)
                         elif algo == "Node Similarity":
-                            gds_results = gds.run_similarity(gds_graph_name)
+                            gds_results = st.session_state.gds.run_similarity(gds_graph_name)
                         else:
                             gds_results = [{"error": "Unknown algorithm selected."}]
 

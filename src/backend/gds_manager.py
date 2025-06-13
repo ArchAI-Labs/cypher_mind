@@ -1,62 +1,27 @@
 import os
 from neo4j import GraphDatabase
-from litellm import completion
-import json
 from dotenv import load_dotenv
 import logging
+
+from .llm import generate_coalesce_expression
 
 load_dotenv()
 
 logger = logging.getLogger(__name__)
 
 
-def generate_coalesce_expression(schema: dict) -> str:
-    """
-    It uses an LLM to generate a Cypher `coalesce(...)` expression based on the schema properties.
-    """
-    system_prompt = """
-    You are an expert in Neo4j and Cypher.
-    Your task is to create a `coalesce(...)` function that uses the best available properties 
-    to identify nodes in the graph.
 
-    Rules:
-    - Give priority to `name`, `title`, `label`, `id_*`.
-    - The output must be **only** a Cypher string such as: coalesce(...).
-    - Use the format: gds.util.asNode(nodeId).<prop>.
-    - If nothing is present, add 'Unknown' as a fallback.
-    - Do not add explanation, only code.
-    """
-
-    prompt = f"""
-    Here is the schema of the graph nodes in JSON format:
-
-    {json.dumps(schema, indent=2)}
-
-    Generates a coalesce function to label nodes in the Cypher:
-    """
-
-    response = completion(
-        model=os.environ.get("MODEL"),
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": prompt}
-        ],
-        temperature=0,
-        max_completion_tokens=150
-    )
-
-    return response.choices[0].message.content.strip()
 
 class GDSManager:
     def __init__(self, uri: str, user: str, password: str):
         self.driver = GraphDatabase.driver(uri, auth=(user, password))
+        self.coalesce_expr = "gds.util.asNode(nodeId)"
 
     def close(self):
         self.driver.close()
     
-    def get_schema(schema: dict):
-        coalesce_expr = generate_coalesce_expression(schema)
-        return coalesce_expr
+    def get_schema(self, schema: dict):
+        self.coalesce_expr = generate_coalesce_expression(schema)
 
     def create_projection(self, graph_name: str, node_labels: list, relationship_types: list) -> str:
         """Create a GDS Projection"""
@@ -103,83 +68,67 @@ class GDSManager:
             return [{"error": str(e)}]
 
     def run_pagerank(self, graph_name: str) -> list:
-        """Esegue PageRank sulla proiezione."""
-        return self._run_algorithm(
-            graph_name,
-            """
+        query = f"""
             CALL gds.pageRank.stream($graph_name)
             YIELD nodeId, score
-            RETURN gds.util.asNode(nodeId).name AS name, score
+            RETURN {self.coalesce_expr} AS label, score
             ORDER BY score DESC
             LIMIT 10
-            """,
-            "PageRank"
-        )
+        """
+        return self._run_algorithm(graph_name, query, "PageRank")
 
     def run_betweenness(self, graph_name: str) -> list:
-        """Esegue Betweenness Centrality."""
-        return self._run_algorithm(
-            graph_name,
-            """
+        query = f"""
             CALL gds.betweenness.stream($graph_name)
             YIELD nodeId, score
-            RETURN gds.util.asNode(nodeId).name AS name, score
+            RETURN {self.coalesce_expr} AS label, score
             ORDER BY score DESC
             LIMIT 10
-            """,
-            "Betweenness"
-        )
+        """
+        return self._run_algorithm(graph_name, query, "Betweenness")
+
 
     def run_closeness(self, graph_name: str) -> list:
-        """Esegue Closeness Centrality."""
-        return self._run_algorithm(
-            graph_name,
-            """
+        query = f"""
             CALL gds.beta.closeness.stream($graph_name)
-            YIELD nodeId, centrality
-            RETURN gds.util.asNode(nodeId).name AS name, centrality
-            ORDER BY centrality DESC
+            YIELD nodeId, score
+            RETURN {self.coalesce_expr} AS label, score
+            ORDER BY score DESC
             LIMIT 10
-            """,
-            "Closeness"
-        )
+        """
+        return self._run_algorithm(graph_name, query, "Closeness")
 
-    def run_louvain(self, graph_name: str, coalesce_expr:str) -> list:
-        """Esegue Louvain Community Detection."""
+
+    def run_louvain(self, graph_name: str) -> list:
         query = f"""
             CALL gds.louvain.stream($graph_name)
             YIELD nodeId, communityId
-            RETURN {coalesce_expr} AS label, communityId
+            RETURN {self.coalesce_expr} AS label, communityId
             ORDER BY communityId
         """
-        return self._run_algorithm(
-            graph_name,
-            query, 
-            "Louvain"
-        )
+        return self._run_algorithm(graph_name, query, "Louvain")
+
 
     def run_similarity(self, graph_name: str) -> list:
-        """Esegue Node Similarity."""
-        return self._run_algorithm(
-            graph_name,
-            """
+        query = f"""
             CALL gds.nodeSimilarity.stream($graph_name)
             YIELD node1, node2, similarity
             RETURN 
-                gds.util.asNode(node1).name AS Node1, 
-                gds.util.asNode(node2).name AS Node2, 
+                {self.coalesce_expr.replace('nodeId', 'node1')} AS Node1,
+                {self.coalesce_expr.replace('nodeId', 'node2')} AS Node2,
                 similarity
             ORDER BY similarity DESC
             LIMIT 10
-            """,
-            "Node Similarity"
-        )
+        """
+        return self._run_algorithm(graph_name, query, "Node Similarity")
+
 
     def _run_algorithm(self, graph_name: str, query: str, algo_name: str) -> list:
         """Metodo privato generico per eseguire algoritmi GDS."""
         try:
             with self.driver.session() as session:
                 result = session.run(query, graph_name=graph_name)
+                print(result)
                 return [record.data() for record in result]
         except Exception as e:
             logger.error(f"Errore in {algo_name}: {e}")
