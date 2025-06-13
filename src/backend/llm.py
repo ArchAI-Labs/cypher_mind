@@ -1,10 +1,15 @@
 import os
 from dotenv import load_dotenv
 import json
+import logging
 
 from neo4j import GraphDatabase
-from google import genai
-from google.genai import types
+
+from litellm import completion
+
+# Configurazione logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -12,8 +17,7 @@ uri = os.environ.get("NEO4J_URI")
 user = os.environ.get("NEO4J_USER")
 password = os.environ.get("NEO4J_PASSWORD")
 
-gemini_api_key = os.environ.get("GEMINI_API_KEY")
-client = genai.Client(api_key=gemini_api_key)
+api_key = os.environ.get("GEMINI_API_KEY")
 
 
 def get_schema(nodes, relations):
@@ -44,21 +48,23 @@ def get_schema(nodes, relations):
                     - ...
             ```
         """
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt},
+        ]
 
-        response = client.models.generate_content(
+        response = completion(
             model=os.environ.get("MODEL"),
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                system_instruction=system_prompt,
-                # max_output_tokens=2048,
-                top_k=2,
-                top_p=0.5,
-                temperature=0.2,
-                seed=42,
-            ),
-        )
-
-        return response.text
+            messages=messages,
+            max_completion_tokens=2048,
+            top_k=2,
+            top_p=0.5,
+            temperature=0.2,
+            logprobs=False
+            )
+        
+        
+        return response.choices[0].message.content
 
     except Exception as e:
         return f"An error occurred: {e}"
@@ -104,19 +110,20 @@ def ask_neo4j_gemini(question, data_schema):
         Generates a robust Cypher query for the Neo4j database.
         """
 
-        response = client.models.generate_content(
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt},
+        ]
+        response = completion(
             model=os.environ.get("MODEL"),
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                system_instruction=system_prompt,
-                max_output_tokens=2048,
-                top_k=2,
-                top_p=0.5,
-                temperature=0.2,
-                seed=42,
-            ),
-        )
-        cypher_query = response.text.removeprefix("```cypher").removesuffix("```")
+            messages=messages,
+            max_completion_tokens=2048,
+            top_k=2,
+            top_p=0.5,
+            temperature=0.2,
+            logprobs=False
+            )
+        cypher_query = response.choices[0].message.content.removeprefix("```cypher").removesuffix("```")
 
         while "```" in cypher_query:
             cypher_query = cypher_query.replace("```", "")
@@ -134,3 +141,41 @@ def ask_neo4j_gemini(question, data_schema):
 
     except Exception as e:
         return f"An error occurred: {e}"
+
+def generate_coalesce_expression(schema: dict) -> str:
+    """
+    It uses an LLM to generate a Cypher `coalesce(...)` expression based on the schema properties.
+    """
+    system_prompt = """
+    You are an expert in Neo4j and Cypher.
+    Your task is to create a `coalesce(...)` function that uses the best available properties 
+    to identify nodes in the graph.
+
+    Rules:
+    - Give priority to `name`, `title`, `label`, `id_*`.
+    - The output must be **only** a Cypher string such as: coalesce(...).
+    - Use the format: gds.util.asNode(nodeId).<prop>.
+    - If nothing is present, add 'Unknown' as a fallback.
+    - Do not add explanation, only code.
+    """
+
+    prompt = f"""
+    Here is the schema of the graph nodes in JSON format:
+
+    {json.dumps(schema, indent=2)}
+
+    Generates a coalesce function to label nodes in the Cypher:
+    """
+
+    response = completion(
+        model=os.environ.get("MODEL"),
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt}
+        ],
+        temperature=0,
+        max_completion_tokens=150,
+        logprobs=False
+    )
+
+    return response.choices[0].message.content.removeprefix("```cypher").removesuffix("```").strip()

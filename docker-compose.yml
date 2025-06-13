@@ -8,6 +8,7 @@ services:
       - ./data_fake:/var/lib/neo4j/import/data_fake
     environment:
       NEO4J_AUTH: neo4j/cH4ng3M3
+      NEO4J_PLUGINS: '["graph-data-science"]'
       NEO4J_ACCEPT_LICENSE_AGREEMENT: "yes"
 
   importer:
@@ -24,7 +25,7 @@ services:
       NEO4J_PASSWORD: cH4ng3M3
       QDRANT_HOST: qdrant
       QDRANT_PORT: 6333
-      QDRANT_COLLECTION: neo4j_qdrant_cache # Opzionale, ma consigliato
+      QDRANT_COLLECTION: neo4j_qdrant_cache # Optional but recommended
 
   qdrant:
     image: qdrant/qdrant:latest
