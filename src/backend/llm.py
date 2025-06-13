@@ -60,7 +60,10 @@ def get_schema(nodes, relations):
             top_k=2,
             top_p=0.5,
             temperature=0.2,
-            logprobs=False
+            logprobs=False,
+            timeout=10,
+            max_retries=1,
+            num_retries=1
             )
         
         
@@ -121,7 +124,10 @@ def ask_neo4j_gemini(question, data_schema):
             top_k=2,
             top_p=0.5,
             temperature=0.2,
-            logprobs=False
+            logprobs=False,
+            timeout=10,
+            max_retries=1,
+            num_retries=1
             )
         cypher_query = response.choices[0].message.content.removeprefix("```cypher").removesuffix("```")
 
@@ -175,7 +181,10 @@ def generate_coalesce_expression(schema: dict) -> str:
         ],
         temperature=0,
         max_completion_tokens=150,
-        logprobs=False
+        logprobs=False,
+        timeout=10,
+        max_retries=1,
+        num_retries=1
     )
 
     return response.choices[0].message.content.removeprefix("```cypher").removesuffix("```").strip()
