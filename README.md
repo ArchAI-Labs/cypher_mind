@@ -144,7 +144,7 @@ This repository contains the complete implementation of the ArchAI - CypherMind 
         }
         ```
 
-    *   **`backend/gemini.py` (Gemini Integration):** This module handles the interaction with the Google Gemini API. It's used internally by `app_streamlit.py` to translate natural language questions into Cypher queries. You typically don't interact with this module directly.  Configuration is handled through the `GEMINI_API_KEY` environment variable.
+    *   **`backend/llm.py` (LLM Integration):** This module handles the interaction with the Google Gemini API (**the nly one tested at the moment**) using LiteLLM. It's used internally by `app_streamlit.py` to translate natural language questions into Cypher queries. You typically don't interact with this module directly.  Configuration is handled through the `GEMINI_API_KEY` environment variable.
 
     *   **`backend/semantic_cache.py` (Semantic Cache):** This module implements the semantic cache using Qdrant. It's used internally by `app_streamlit.py` to store and retrieve previously asked questions and their corresponding Cypher queries. Configuration is managed via environment variables such as `QDRANT_COLLECTION`, `QDRANT_MODE`, `QDRANT_HOST`, `QDRANT_API_KEY`, `QDRANT_URL`, `EMBEDDER`, and `VECTOR_SIZE`.
 
@@ -198,8 +198,8 @@ The modules interact as follows:
 
 1.  The `app_streamlit.py` module receives user input through the Streamlit UI.
 2.  It first checks the `semantic_cache.py` module for a similar question.
-3.  If no similar question is found, it calls the `gemini.py` module to generate a Cypher query.
-4.  The `gemini.py` module interacts with the Google Gemini API to translate the natural language question into a Cypher query. It also retrieves the database schema to provide context to the LLM.
+3.  If no similar question is found, it calls the `llm.py` module to generate a Cypher query.
+4.  The `llm.py` module interacts with the Google Gemini API to translate the natural language question into a Cypher query. It also retrieves the database schema to provide context to the LLM.
 5.  The generated Cypher query is executed against the Neo4j database using the `neo4j-driver`.
 6.  The results are formatted by `app_streamlit.py` using utility functions from `streamlit_app_utils.py`.
 7.  The question, Cypher query, and results are stored in the `semantic_cache.py` module for future use.
@@ -224,9 +224,9 @@ The `main.py` script uses the `import_data.py` module to import data into the Ne
     *   Stop button: Allows users to interrupt long-running queries.
 
 *   **System-Facing:**
-    *   Gemini API integration (`gemini.py`): Handles the communication with the Google Gemini API for query translation.
+    *   Gemini API integration (`llm.py`): Handles the communication with the Google Gemini API for query translation.
     *   Semantic cache (`semantic_cache.py`): Stores and retrieves previously asked questions and their corresponding Cypher queries.
-    *   Neo4j interaction (`gemini.py`): Executes Cypher queries against the Neo4j database.
+    *   Neo4j interaction (`llm.py`): Executes Cypher queries against the Neo4j database.
     *   Data import (`import_data.py`): Imports data into the Neo4j database from CSV files.
     *   Utility functions (`streamlit_app_utils.py`): Provides helper functions for formatting results and generating sample questions.
 
