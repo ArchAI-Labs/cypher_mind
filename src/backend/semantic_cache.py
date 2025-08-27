@@ -174,18 +174,18 @@ class SemanticCache:
                 aliases=["show first {count} users in project {project}", "list top {count} people from {project}"],
                 parameter_patterns={
                     "count": r'\b(?:top|first)\s+(\d+)\b',
-                    "project": r'(?:project|from)\s+([A-Za-z0-9_]+)'
+                    "project": r'project\s+([A-Za-z0-9_]+)'
                 }
             ),
             QueryTemplate(
                 intent="list_projects_by_user",
                 template="list projects for user {user}",
                 parameters=["user"],
-                cypher_template="MATCH (u:User {name: '{user}'})-[:WORKS_ON]->(p:Project) RETURN p",
+                cypher_template="MATCH (p:Person {name: '{user}'})-[:WORKS_ON]->(proj:Project) RETURN proj",
                 priority=1,
                 aliases=["show projects of {user}", "what projects does {user} work on"],
                 parameter_patterns={
-                    "user": r'(?:user|for|of|does)\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)'
+                    "user": r'(?:for|of|does)\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)'
                 }
             ),
             QueryTemplate(
@@ -198,16 +198,17 @@ class SemanticCache:
                     "company": r'(?:company|for)\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)'
                 }
             ),
-            QueryTemplate(
-                intent="list_project_user_working_on",
-                template="what projects is {user} working on",
-                parameters=["user"],
-                cypher_template="MATCH (p:Person {name: '{user}'})-[:WORK_ON]->(proj:Project) RETURN proj",
-                priority=1,
-                parameter_patterns={
-                    "user": r'(?:is|does)\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)\s+(?:working|work)'
-                }
-            ),
+            # QueryTemplate(
+            #     intent="list_project_user_working_on",
+            #     template="what projects is {user} working on",
+            #     parameters=["user"],
+            #     cypher_template="MATCH (p:Person {name: '{user}'})-[:WORK_ON]->(proj:Project) RETURN proj",
+            #     priority=1,
+            #     aliases=["which projects is {user} working on", "what projects is {user} working on"],
+            #     parameter_patterns={
+            #         "user": r'(?:is|does)\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)\s+(?:working|work)'
+            #     }
+            # ),
             QueryTemplate(
                 intent="list_project_and_company_by_user",
                 template="find projects {user} works on and company he works for",
@@ -215,7 +216,7 @@ class SemanticCache:
                 cypher_template="MATCH (p:Person {name: '{user}'})-[:WORK_ON]->(proj:Project) OPTIONAL MATCH (p)-[:WORKS_FOR]->(comp:Company) RETURN proj.title AS Project, comp.name AS Company",
                 priority=3,
                 parameter_patterns={
-                    "user": r'(?:projects|find)\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)\s+works'
+                    "user": r'(?:find\s+projects\s+|find\s+)?([A-Za-z]+(?:\s+[A-Za-z]+)?)\s+works'
                 }
             ),
         ]
@@ -660,3 +661,44 @@ def create_optimized_cache(collection_name: str = "semantic_cache", **kwargs) ->
     defaults.update(kwargs)
     
     return SemanticCache(collection_name, **defaults)
+
+
+# import logging
+# def run():
+#     # Attiva logging per debug
+#     logging.basicConfig(level=logging.INFO)
+
+#     # Inizializza la cache in modalità memoria (non serve Qdrant esterno)
+#     cache = create_optimized_cache("test_cache", mode="memory")
+
+#     # Domande di esempio
+#     questions = [
+#         "Get top 5 users from project Apollo",
+#         "List projects for user Alice",
+#         "Which projects is Bob working on?",
+#         "Find projects Charlie works on and company he works for"
+#     ]
+
+#     for q in questions:
+#         hit = cache.smart_search(q)
+#         print(f"\n❓ Question: {q}")
+#         print(f"🔎 Strategy: {hit.strategy}")
+#         print(f"📊 Confidence: {hit.confidence:.2f}")
+#         print(f"📜 Cypher query: {hit.cypher_query}")
+#         print(f"💾 Cached response: {hit.response}")
+
+#         # Se vuoi testare anche la memorizzazione
+#         if hit.cypher_query:
+#             cache.store_query_and_response(
+#                 question=q,
+#                 cypher_query=hit.cypher_query,
+#                 response=f"Dummy response for: {q}",
+#                 template_used=hit.template_used,
+#             )
+
+#     # Mostra statistiche
+#     stats = cache.get_performance_stats()
+#     print("\n📈 Performance stats:", stats)
+
+# if __name__ == "__main__":
+#     run()
