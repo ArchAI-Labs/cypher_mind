@@ -169,7 +169,7 @@ class SemanticCache:
                 intent="get_top_users_by_project",
                 template="get top {count} users from project {project}",
                 parameters=["count", "project"],
-                cypher_template="MATCH (u:User)-[:WORKS_ON]->(p:Project {{name: '{project}'}}) RETURN u LIMIT {count}",
+                cypher_template="MATCH (p:Person)-[:WORK_ON]->(proj:Project {name: '{project}'}) RETURN u LIMIT {count}",
                 priority=1,
                 aliases=["show first {count} users in project {project}", "list top {count} people from {project}"],
                 parameter_patterns={
@@ -181,7 +181,7 @@ class SemanticCache:
                 intent="list_projects_by_user",
                 template="list projects for user {user}",
                 parameters=["user"],
-                cypher_template="MATCH (p:Person {name: '{user}'})-[:WORKS_ON]->(proj:Project) RETURN proj",
+                cypher_template="MATCH (p:Person {name: '{user}'})-[:WORK_ON]->(proj:Project) RETURN proj",
                 priority=1,
                 aliases=["show projects of {user}", "what projects does {user} work on"],
                 parameter_patterns={

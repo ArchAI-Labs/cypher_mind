@@ -4,3 +4,6 @@ qdrant-client==1.13.3
 fastembed==0.6.0
 litellm==1.70.4
 spacy>=3.7
+pip==25.2
+setuptools==80.9.0
+wheel==0.45.1
