@@ -1,5 +1,6 @@
 import os
 import json
+import logging
 
 import streamlit as st
 import pandas as pd
@@ -14,7 +15,10 @@ from backend.utils.streamlit_app_utils import (
     format_results_as_table,
     generate_sample_questions,
 )
-from backend.semantic_cache import SemanticCache
+from backend.semantic_cache import SemanticCache, create_optimized_cache
+
+# Se hai codice che importa EnhancedSemanticCache, aggiungi questo alias
+# EnhancedSemanticCache = SemanticCache
 
 LOGO_PATH = "img/logo_cyphermind.png"
 
@@ -67,6 +71,13 @@ st.markdown(
         .similar-badge {{ background-color: #ffc107; color: black; }}
         .signature-badge {{ background-color: #6f42c1; }}
         .llm-badge {{ background-color: #dc3545; }}
+        .performance-metric {{
+            background-color: #f8f9fa;
+            padding: 8px;
+            border-radius: 4px;
+            border: 1px solid #dee2e6;
+            margin: 4px 0;
+        }}
     </style>
     """,
     unsafe_allow_html=True,
@@ -75,58 +86,87 @@ st.markdown(
 def get_strategy_badge(strategy):
     """Return HTML badge for the strategy used"""
     badges = {
-        "template": '<span class="strategy-badge template-badge">TEMPLATE</span>',
+        "template_match": '<span class="strategy-badge template-badge">TEMPLATE</span>',
         "exact_match": '<span class="strategy-badge exact-badge">EXACT MATCH</span>',
         "semantic_similarity": '<span class="strategy-badge similar-badge">SIMILAR</span>',
         "semantic_signature": '<span class="strategy-badge signature-badge">SIGNATURE</span>',
         "llm": '<span class="strategy-badge llm-badge">LLM GENERATED</span>'
     }
-    return badges.get(strategy, "")
+    return badges.get(strategy, f'<span class="strategy-badge">{strategy.upper()}</span>')
 
-def display_cache_result_info(search_result):
-    """Display information about cache search results"""
-    if search_result.get("found_template"):
+def display_cache_result_info(cache_hit):
+    """Display information about cache search results using new CacheHit object"""
+    if cache_hit.strategy == "template_match":
         st.markdown(
             f'<div class="cache-info">'
-            f'{get_strategy_badge("template")}'
+            f'{get_strategy_badge("template_match")}'
             f'<strong>Query template matched!</strong> Generated Cypher directly from pattern without LLM call.'
-            f'<br><small>Confidence: {search_result["confidence"]:.2%}</small>'
+            f'<br><small>Confidence: {cache_hit.confidence:.2%} | Template: {cache_hit.template_used or "Unknown"}</small>'
             f'</div>',
             unsafe_allow_html=True
         )
-    elif search_result.get("found_exact"):
+    elif cache_hit.strategy == "exact_match":
         st.markdown(
             f'<div class="cache-info">'
             f'{get_strategy_badge("exact_match")}'
             f'<strong>Exact match found in cache!</strong> Retrieved previously processed query.'
-            f'<br><small>Confidence: {search_result["confidence"]:.2%}</small>'
+            f'<br><small>Confidence: {cache_hit.confidence:.2%}</small>'
             f'</div>',
             unsafe_allow_html=True
         )
-    elif search_result.get("found_similar"):
-        strategy = search_result.get("strategy_used", "semantic_similarity")
+    elif cache_hit.strategy in ["semantic_similarity", "semantic_signature"]:
         st.markdown(
             f'<div class="cache-info">'
-            f'{get_strategy_badge(strategy)}'
-            f'<strong>Similar query found!</strong> Using cached result with {strategy.replace("_", " ")}.'
-            f'<br><small>Confidence: {search_result["confidence"]:.2%}</small>'
+            f'{get_strategy_badge(cache_hit.strategy)}'
+            f'<strong>Similar query found!</strong> Using cached result with {cache_hit.strategy.replace("_", " ")}.'
+            f'<br><small>Confidence: {cache_hit.confidence:.2%}</small>'
             f'</div>',
             unsafe_allow_html=True
         )
+    elif cache_hit.strategy == "no_match":
+        st.info("No suitable cache match found. Will use LLM to generate new query.")
+
+def initialize_cache():
+    """Initialize the enhanced semantic cache with better error handling"""
+    try:
+        # Prima prova la funzione factory ottimizzata
+        cache = create_optimized_cache(
+            collection_name=os.environ.get("QDRANT_COLLECTION", "semantic_cache"),
+            mode=os.environ.get("QDRANT_MODE", "memory"),
+            embedder=os.environ.get("EMBEDDER", "sentence-transformers/all-MiniLM-L6-v2"),
+            vector_size=int(os.environ.get("VECTOR_SIZE", "384"))
+        )
+        return cache
+    except Exception as e:
+        st.error(f"Error with optimized cache initialization: {e}")
+        logging.error(f"Optimized cache initialization error: {e}")
+        
+        # Fallback alla inizializzazione diretta
+        try:
+            cache = SemanticCache(
+                collection_name=os.environ.get("QDRANT_COLLECTION", "semantic_cache"),
+                mode=os.environ.get("QDRANT_MODE", "memory"),
+                embedder=os.environ.get("EMBEDDER", "sentence-transformers/all-MiniLM-L6-v2"),
+                vector_size=int(os.environ.get("VECTOR_SIZE", "384"))
+            )
+            return cache
+        except Exception as e2:
+            st.error(f"Error with direct cache initialization: {e2}")
+            logging.error(f"Direct cache initialization error: {e2}")
+            return None
 
 def main():
     st.image(LOGO_PATH, width=200)
-    st.title("ArchAI - CypherMind")
-    st.subheader("Translate Natural Language to Cypher Query")
+    st.title("ArchAI - CypherMind Enhanced")
+    st.subheader("Natural Language to Cypher with Smart Semantic Caching")
 
-    # Initialize Semantic Cache
+    # Initialize Enhanced Semantic Cache
     if "qdrant_cache" not in st.session_state:
-        st.session_state.qdrant_cache = SemanticCache(
-            collection_name=os.environ.get("QDRANT_COLLECTION"),
-            mode=os.environ.get("QDRANT_MODE"),
-            embedder=os.environ.get("EMBEDDER"),
-            vector_size=int(os.environ.get("VECTOR_SIZE")),
-        )
+        with st.spinner("Initializing enhanced semantic cache..."):
+            st.session_state.qdrant_cache = initialize_cache()
+            if st.session_state.qdrant_cache is None:
+                st.error("Failed to initialize semantic cache. Some features may be limited.")
+                return
 
     if "gds" not in st.session_state:
         st.session_state.gds = GDSManager(
@@ -143,12 +183,12 @@ def main():
         if "llm_result" not in st.session_state:
             st.session_state.llm_result = None
         
-        if "last_search_result" not in st.session_state:
-            st.session_state.last_search_result = None
+        if "last_cache_hit" not in st.session_state:
+            st.session_state.last_cache_hit = None
 
         if st.button("Clear Previous Result"):
             st.session_state.llm_result = None
-            st.session_state.last_search_result = None
+            st.session_state.last_cache_hit = None
 
         selected_question = st.selectbox(
             "Select an example question:", list(sample_questions.keys())
@@ -171,97 +211,111 @@ def main():
         graph_schema = get_schema(nodes=nodes, relations=relationship)
 
         if st.button("Run"):
-            if question:
+            if question and st.session_state.qdrant_cache:
                 with st.spinner("Searching cache and processing query..."):
-                    # Use smart search
-                    search_result = st.session_state.qdrant_cache.smart_search(question)
-                    st.session_state.last_search_result = search_result
+                    # Use enhanced smart search
+                    cache_hit = st.session_state.qdrant_cache.smart_search(question)
+                    st.session_state.last_cache_hit = cache_hit
                     
-                    if (search_result["found_template"] or 
-                        search_result["found_exact"] or 
-                        search_result["found_similar"]):
+                    if cache_hit.cypher_query and cache_hit.confidence > 0.0:
+                        # We have a cache hit with Cypher query
+                        cypher_query = cache_hit.cypher_query
                         
-                        # Use cached/template result
-                        cypher_query = search_result["cypher_query"]
-                        
-                        if search_result.get("response"):
-                            # We have a complete cached result
+                        if cache_hit.response:
+                            # Complete cached result available
                             st.session_state.llm_result = {
-                                "data": search_result["response"],
+                                "data": cache_hit.response,
                                 "cypher_query": cypher_query,
                                 "cached": True,
-                                "strategy": search_result.get("strategy_used", "unknown")
+                                "strategy": cache_hit.strategy,
+                                "confidence": cache_hit.confidence
                             }
                         else:
-                            # We have Cypher but need to execute it
+                            # Execute the Cypher query
                             st.info("Executing generated Cypher query...")
                             try:
-                                # Execute the Cypher query
                                 result = ask_neo4j_llm(
                                     question=question,
                                     data_schema=graph_schema,
                                     override_cypher=cypher_query
                                 )
                                 
-                                if isinstance(result, dict) and result["data"]:
-                                    # Store the complete result
-                                    template_used = search_result.get("strategy_used") if search_result["found_template"] else None
-                                    st.session_state.qdrant_cache.store_query_and_response(
+                                if isinstance(result, dict) and result.get("data"):
+                                    # Store the complete result in cache
+                                    success = st.session_state.qdrant_cache.store_query_and_response(
                                         question=question,
                                         cypher_query=cypher_query,
                                         response=result["data"],
-                                        template_used=template_used
+                                        template_used=cache_hit.template_used
                                     )
+                                    
+                                    if not success:
+                                        st.warning("Query executed but could not be stored in cache.")
                                     
                                     st.session_state.llm_result = {
                                         **result,
-                                        "cached": search_result["found_exact"],
-                                        "strategy": search_result.get("strategy_used", "template")
+                                        "cached": cache_hit.strategy == "exact_match",
+                                        "strategy": cache_hit.strategy,
+                                        "confidence": cache_hit.confidence
                                     }
                                 else:
-                                    st.session_state.llm_result = None
                                     st.warning("No results returned from query execution.")
+                                    st.session_state.llm_result = None
+                                    
                             except Exception as e:
-                                st.session_state.llm_result = None
                                 st.error(f"Error executing Cypher query: {e}")
+                                st.session_state.llm_result = None
                     else:
                         # No cache hit, use LLM
-                        st.info("No suitable cache match found. Generating Cypher query from LLM...")
+                        st.info("No suitable cache match found. Generating new Cypher query...")
                         try:
                             result = ask_neo4j_llm(
                                 question=question,
                                 data_schema=graph_schema
                             )
-                            if isinstance(result, dict) and result["data"]:
-                                # Store the new result
-                                st.session_state.qdrant_cache.store_query_and_response(
+                            
+                            if isinstance(result, dict) and result.get("data"):
+                                # Store the new result in cache
+                                success = st.session_state.qdrant_cache.store_query_and_response(
                                     question=question,
                                     cypher_query=result["cypher_query"],
-                                    response=result["data"],
+                                    response=result["data"]
                                 )
+                                
+                                if success:
+                                    st.success("New query generated and stored in semantic cache.")
+                                else:
+                                    st.warning("Query generated but could not be stored in cache.")
+                                
                                 st.session_state.llm_result = {
                                     **result,
                                     "cached": False,
-                                    "strategy": "llm"
+                                    "strategy": "llm",
+                                    "confidence": 1.0
                                 }
-                                st.success("New query generated and stored in semantic cache.")
                             else:
-                                st.session_state.llm_result = None
                                 st.warning("No results returned from LLM.")
+                                st.session_state.llm_result = None
+                                
                         except Exception as e:
+                            st.error(f"Error with LLM processing: {e}")
                             st.session_state.llm_result = None
-                            st.error(f"Error: {e}")
 
         # Display cache search result info
-        if st.session_state.last_search_result:
-            display_cache_result_info(st.session_state.last_search_result)
+        if st.session_state.last_cache_hit:
+            display_cache_result_info(st.session_state.last_cache_hit)
 
+        # Display results
         if st.session_state.llm_result:
             result = st.session_state.llm_result
             strategy = result.get("strategy", "unknown")
+            confidence = result.get("confidence", 0.0)
             
-            st.markdown(f'{get_strategy_badge(strategy)} Query processed successfully!', 
-                       unsafe_allow_html=True)
+            st.markdown(
+                f'{get_strategy_badge(strategy)} Query processed successfully! '
+                f'<small>(Confidence: {confidence:.2%})</small>', 
+                unsafe_allow_html=True
+            )
 
             st.write("**Cypher Query:**")
             st.code(result["cypher_query"], language="cypher")
@@ -278,12 +332,13 @@ def main():
                         st.dataframe(df)
                 except Exception as e:
                     st.write(f"Could not display results as a table: {e}")
+                    st.json(result["data"])
             else:
                 st.write("No results found.")
 
     with col2:
-        with st.sidebar.expander("Advanced Options", expanded=True):
-            st.subheader("Cache Settings")
+        with st.sidebar.expander("Enhanced Cache Settings", expanded=True):
+            st.subheader("Smart Cache Configuration")
             
             # Template matching threshold
             template_threshold = st.slider(
@@ -293,51 +348,130 @@ def main():
                 value=0.75,
                 step=0.05,
                 format="%.2f",
-                help="Threshold for matching query templates. Lower values allow more flexible template matching.",
+                help="Minimum confidence for template matching. Lower values allow more flexible matching.",
             )
             
-            # Similarity threshold for fallback search
-            similarity_threshold = st.slider(
-                "Similarity Threshold",
-                min_value=0.0,
+            # Exact match threshold
+            exact_threshold = st.slider(
+                "Exact Match Threshold",
+                min_value=0.9,
                 max_value=1.0,
-                value=0.98,
+                value=0.95,
                 step=0.01,
                 format="%.3f",
-                help="Threshold for semantic similarity search when no template matches.",
+                help="Threshold for considering two queries as exact matches.",
             )
             
-            st.info("The cache uses multiple strategies:\n"
-                   "1. **Template Matching** - Direct pattern recognition\n"
-                   "2. **Exact Match** - Previously seen identical queries\n"
-                   "3. **Semantic Signature** - Queries with same structure\n"
-                   "4. **Similarity Search** - Semantically similar queries")
+            # Similarity threshold
+            similarity_threshold = st.slider(
+                "Similarity Search Threshold",
+                min_value=0.7,
+                max_value=0.95,
+                value=0.8,
+                step=0.01,
+                format="%.3f",
+                help="Minimum similarity for fallback semantic search.",
+            )
+            
+            st.info(
+                "🧠 **Enhanced Cache Strategies:**\n\n"
+                "1. **Template Matching** - Pattern-based Cypher generation\n"
+                "2. **Exact Match** - Previously cached identical queries\n" 
+                "3. **Semantic Signature** - Structurally similar queries\n"
+                "4. **Similarity Search** - Semantically related queries\n"
+                "5. **LLM Fallback** - Generate new query when needed"
+            )
 
         with st.sidebar.expander("Cache Management"):
-            if st.button("Reset Semantic Cache"):
-                # Reset both main and template collections
-                try:
-                    st.session_state.qdrant_cache.qdrant_client.delete_collection(
-                        collection_name=st.session_state.qdrant_cache.collection_name
-                    )
-                    st.session_state.qdrant_cache.qdrant_client.delete_collection(
-                        collection_name=st.session_state.qdrant_cache.template_collection
-                    )
-                except:
-                    pass  # Collections might not exist
-                
-                # Reinitialize cache
-                st.session_state.qdrant_cache = SemanticCache(
-                    collection_name=os.environ.get("QDRANT_COLLECTION"),
-                    mode=os.environ.get("QDRANT_MODE"),
-                    embedder=os.environ.get("EMBEDDER"),
-                    vector_size=int(os.environ.get("VECTOR_SIZE")),
-                )
-                st.success("Semantic cache successfully reset!")
+            col_cache_a, col_cache_b = st.columns(2)
             
-            if st.button("Add Custom Template"):
-                st.info("Feature coming soon! Templates can be added programmatically.")
+            with col_cache_a:
+                if st.button("Reset Cache"):
+                    try:
+                        # Delete collections
+                        if st.session_state.qdrant_cache:
+                            st.session_state.qdrant_cache.qdrant_client.delete_collection(
+                                collection_name=st.session_state.qdrant_cache.collection_name
+                            )
+                            st.session_state.qdrant_cache.qdrant_client.delete_collection(
+                                collection_name=st.session_state.qdrant_cache.template_collection
+                            )
+                        
+                        # Reinitialize
+                        st.session_state.qdrant_cache = initialize_cache()
+                        if st.session_state.qdrant_cache:
+                            st.success("Cache reset successfully!")
+                        else:
+                            st.error("Error reinitializing cache.")
+                    except Exception as e:
+                        st.error(f"Error resetting cache: {e}")
+            
+            with col_cache_b:
+                if st.button("Clear Memory"):
+                    if st.session_state.qdrant_cache:
+                        st.session_state.qdrant_cache.clear_caches()
+                        st.success("Memory caches cleared!")
+                    else:
+                        st.warning("No cache instance available.")
 
+            st.info("**Reset Cache:** Deletes all stored queries and templates\n"
+                   "**Clear Memory:** Clears in-memory caches only")
+
+        with st.sidebar.expander("Performance Analytics"):
+            if st.button("View Performance Stats"):
+                if st.session_state.qdrant_cache:
+                    with st.spinner("Loading performance analytics..."):
+                        try:
+                            perf_stats = st.session_state.qdrant_cache.get_performance_stats()
+                            
+                            if "error" in perf_stats:
+                                st.error(f"Error: {perf_stats['error']}")
+                            else:
+                                # Cache Performance
+                                st.subheader("Cache Performance")
+                                perf = perf_stats["cache_performance"]
+                                
+                                col_perf_a, col_perf_b = st.columns(2)
+                                with col_perf_a:
+                                    st.metric("Hit Rate", f"{perf['hit_rate_percentage']:.1f}%")
+                                    st.metric("Template Hits", perf["template_hits"])
+                                
+                                with col_perf_b:
+                                    st.metric("Cache Hits", perf["embedding_cache_hits"])
+                                    st.metric("Cache Misses", perf["embedding_cache_misses"])
+                                
+                                # Storage Info
+                                st.subheader("Storage")
+                                storage = perf_stats["storage"]
+                                
+                                col_stor_a, col_stor_b = st.columns(2)
+                                with col_stor_a:
+                                    st.metric("Cached Queries", storage["total_cached_queries"])
+                                    st.metric("Vector Size", storage["vector_size"])
+                                
+                                with col_stor_b:
+                                    st.metric("Embedding Cache", storage["embedding_cache_size"])
+                                    st.metric("Frequent Cache", storage["frequent_queries_cache_size"])
+                                
+                                # Model Info
+                                st.subheader("Model Configuration")
+                                model_info = perf_stats["model_info"]
+                                efficiency = perf_stats["efficiency"]
+                                
+                                st.text(f"Embedder: {model_info['embedder_model']}")
+                                st.text(f"NLP Enabled: {'Yes' if model_info['nlp_enabled'] else 'No'}")
+                                st.text(f"Templates Loaded: {efficiency['templates_loaded']}")
+                                st.text(f"Avg Template Priority: {efficiency['avg_template_priority']:.1f}")
+                        
+                        except Exception as e:
+                            st.error(f"Error loading performance stats: {e}")
+                else:
+                    st.warning("No cache instance available.")
+            
+            if st.button("Export Analytics"):
+                st.info("Analytics export feature coming soon!")
+
+        # Keep existing GDS functionality
         with st.sidebar.expander("Create Graph Projection"):
             graph_name = st.text_input("Projection Name")
             node_labels_input = st.text_area("Node Labels (separated by commas)")
@@ -350,11 +484,11 @@ def main():
                 relationship_types_list = [rel.strip() for rel in relationship_types_input.split(",") if rel.strip()]
 
                 if not graph_name:
-                    st.warning("⚠️ Please enter a projection name.")
+                    st.warning("Please enter a projection name.")
                 elif not node_labels_list:
-                    st.warning("⚠️ Please enter at least one node label.")
+                    st.warning("Please enter at least one node label.")
                 elif not relationship_types_list:
-                    st.warning("⚠️ Please enter at least one relationship type.")
+                    st.warning("Please enter at least one relationship type.")
                 else:
                     with st.spinner("Creating graph projection..."):
                         msg = gds.create_projection(graph_name, node_labels_list, relationship_types_list)
@@ -398,40 +532,6 @@ def main():
                             st.subheader(f"Results of {algo}:")
                             df = pd.DataFrame(gds_results)
                             st.dataframe(df)
-
-        with st.sidebar.expander("Cache Analytics"):
-            if st.button("View Cache Statistics"):
-                with st.spinner("Loading cache statistics..."):
-                    cache_stats = st.session_state.qdrant_cache.get_cache_stats()
-                    
-                    if "error" in cache_stats:
-                        st.error(f"Error retrieving cache stats: {cache_stats['error']}")
-                    else:
-                        col_a, col_b = st.columns(2)
-                        
-                        with col_a:
-                            st.metric("Cached Queries", cache_stats.get("total_cached_queries", 0))
-                            st.metric("Templates", cache_stats.get("total_templates", 0))
-                        
-                        with col_b:
-                            st.metric("Vector Size", cache_stats.get("vector_size", 0))
-                            st.metric("Embedding Cache", cache_stats.get("embedding_cache_size", 0))
-                        
-                        st.text(f"Model: {cache_stats.get('embedder_model', 'Unknown')}")
-                        
-                        if cache_stats.get("top_semantic_signatures"):
-                            st.subheader("Top Query Patterns")
-                            for signature, count in cache_stats["top_semantic_signatures"]:
-                                st.text(f"• {signature}: {count} queries")
-                        
-                        if cache_stats.get("sample_questions"):
-                            st.subheader("Recent Cached Questions")
-                            for q in cache_stats["sample_questions"]:
-                                display_q = f"{q[:60]}..." if len(q) > 60 else q
-                                st.text(f"• {display_q}")
-
-            if st.button("Export Cache Data"):
-                st.info("Export functionality coming soon!")
 
 if __name__ == "__main__":
     main()
