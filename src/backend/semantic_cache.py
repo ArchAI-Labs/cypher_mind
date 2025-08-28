@@ -194,29 +194,72 @@ class SemanticCache:
                 parameters=["company"],
                 cypher_template="MATCH (p:Person)-[:WORKS_FOR]->(c:Company {name: '{company}'}) RETURN p",
                 priority=2,
+                aliases=["who works at {company}", "all staff from {company}", "find people in {company}", "employees of {company}"],
                 parameter_patterns={
                     "company": r'(?:company|for)\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)'
                 }
             ),
-            # QueryTemplate(
-            #     intent="list_project_user_working_on",
-            #     template="what projects is {user} working on",
-            #     parameters=["user"],
-            #     cypher_template="MATCH (p:Person {name: '{user}'})-[:WORK_ON]->(proj:Project) RETURN proj",
-            #     priority=1,
-            #     aliases=["which projects is {user} working on", "what projects is {user} working on"],
-            #     parameter_patterns={
-            #         "user": r'(?:is|does)\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)\s+(?:working|work)'
-            #     }
-            # ),
             QueryTemplate(
                 intent="list_project_and_company_by_user",
                 template="find projects {user} works on and company he works for",
                 parameters=["user"],
                 cypher_template="MATCH (p:Person {name: '{user}'})-[:WORK_ON]->(proj:Project) OPTIONAL MATCH (p)-[:WORKS_FOR]->(comp:Company) RETURN proj.title AS Project, comp.name AS Company",
                 priority=3,
+                aliases=[
+                    "what projects is {user} involved in and where does he work",
+                    "show {user}'s projects and employer",
+                    "which company does {user} work for and what are his projects",
+                    "get {user}'s work details",
+                    "info on {user}'s projects and company"
+                ],
                 parameter_patterns={
                     "user": r'(?:find\s+projects\s+|find\s+)?([A-Za-z]+(?:\s+[A-Za-z]+)?)\s+works'
+                }
+            ),
+            QueryTemplate(
+                intent="find_people_on_project_by_date_range",
+                template="find all the people working on the project {project} between {start_year} and {end_year}",
+                parameters=["project", "start_year", "end_year"],
+                cypher_template="MATCH (p:Person)-[w:WORK_ON]->(pr:Project {title: '{project}'}) "
+                                "WHERE date(w.start_date) <= date('{end_year}-12-31') "
+                                "AND (date(w.end_date) IS NULL OR date(w.end_date) >= date('{start_year}-01-01')) "
+                                "RETURN p.name AS PersonName, p.id_person AS PersonID",
+                priority=4,
+                aliases=[
+                    "who worked on project {project} from {start_year} to {end_year}",
+                    "list all individuals on {project} between {start_year} and {end_year}",
+                    "people working on {project} during {start_year} and {end_year}",
+                    "find workers for project {project} between years {start_year} and {end_year}",
+                    "show staff on {project} from {start_year} to {end_year}",
+                    "get everyone who worked on {project} from {start_year} until {end_year}"
+                ],
+                parameter_patterns={
+                    "project": r"project(?: called)?\s*(?:'([^']+)'|\"([^\"]+)\"|(\b[A-Za-z0-9\s-]+?)(?=\s+(?:between|from|during)))",
+                    "start_year": r"(?:between|from|during)\s+(\d{4})",
+                    "end_year": r"(?:and|to|until)\s+(\d{4})(?!\s*\d)"
+                }
+            ),
+            QueryTemplate(
+                intent="find_people_in_company_by_date_range",
+                template="find all the people who worked for {company} between {start_year} and {end_year}",
+                parameters=["company", "start_year", "end_year"],
+                cypher_template="MATCH (p:Person)-[w:WORKS_FOR]->(c:Company {name: '{company}'}) "
+                                "WHERE date(w.start_date) <= date('{end_year}-12-31') "
+                                "AND (date(w.end_date) IS NULL OR date(w.end_date) >= date('{start_year}-01-01')) "
+                                "RETURN p.name AS PersonName, p.id_person AS PersonID, c.name AS CompanyName",
+                priority=4,
+                aliases=[
+                    "who worked at {company} from {start_year} to {end_year}",
+                    "list all employees of {company} between {start_year} and {end_year}",
+                    "people employed by {company} during {start_year} and {end_year}",
+                    "find staff for {company} between years {start_year} and {end_year}",
+                    "show personnel at {company} from {start_year} to {end_year}",
+                    "get everyone who was at {company} from {start_year} until {end_year}"
+                ],
+                parameter_patterns={
+                    "company": r"(?:for|at|company(?: called|named)?)\s*(?:'([^']+)'|\"([^\"]+)\"|([A-Z][a-zA-Z\s-]+))(?=\s*(?:between|from|during|\.|\?|$))",
+                    "start_year": r"(?:between|from|during)\s+(\d{4})",
+                    "end_year": r"(?:and|to|until)\s+(\d{4})(?!\s*\d)"
                 }
             ),
         ]
@@ -441,13 +484,13 @@ class SemanticCache:
         
         return normalized
 
-    def smart_search(self, question: str) -> CacheHit:
+    def smart_search(self, question: str, template_threshold: float = 0.8, exact_threshold: float = 0.95, similarity_threshold: float = 0.8) -> CacheHit:
         """Ricerca intelligente ottimizzata per ridurre uso LLM"""
         if not question or not question.strip():
             return CacheHit("", None, 0.0, "invalid_input")
         
-        # Strategy 1: Template matching (più veloce, no LLM)
-        template_match = self.find_best_template_match(question, threshold=0.8)
+        # Strategy 1: Template matching
+        template_match = self.find_best_template_match(question, threshold=template_threshold)
         if template_match:
             template, parameters, confidence = template_match
             cypher_query = self.generate_cypher_from_template(template, parameters)
@@ -470,12 +513,11 @@ class SemanticCache:
         if question_embedding is None:
             return CacheHit("", None, 0.0, "embedding_failed")
         
-        # Cerca match esatti (alta soglia)
         exact_matches = self.qdrant_client.query_points(
             collection_name=self.collection_name,
             query=question_embedding,
             limit=1,
-            score_threshold=0.95,
+            score_threshold=exact_threshold,
         ).points
         
         if exact_matches:
@@ -493,7 +535,7 @@ class SemanticCache:
             collection_name=self.collection_name,
             query=question_embedding,
             limit=3,
-            score_threshold=0.8,
+            score_threshold=similarity_threshold,
         ).points
         
         if similar_matches:

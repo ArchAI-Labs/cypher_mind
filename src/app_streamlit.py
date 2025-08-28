@@ -213,93 +213,101 @@ def main():
         if st.button("Run"):
             if question and st.session_state.qdrant_cache:
                 with st.spinner("Searching cache and processing query..."):
-                    # Use enhanced smart search
-                    cache_hit = st.session_state.qdrant_cache.smart_search(question)
+                    # Recupera i valori dei threshold dalla sessione
+                    template_threshold = st.session_state.get('template_threshold', 0.8)
+                    exact_threshold = st.session_state.get('exact_threshold', 0.95)
+                    similarity_threshold = st.session_state.get('similarity_threshold', 0.8)
+
+                    # Usa l'enhanced smart search con i threshold dell'interfaccia utente
+                    cache_hit = st.session_state.qdrant_cache.smart_search(
+                        question,
+                        template_threshold=template_threshold,
+                        exact_threshold=exact_threshold,
+                        similarity_threshold=similarity_threshold
+                    )
                     st.session_state.last_cache_hit = cache_hit
-                    
-                    if cache_hit.cypher_query and cache_hit.confidence > 0.0:
-                        # We have a cache hit with Cypher query
-                        cypher_query = cache_hit.cypher_query
-                        
-                        if cache_hit.response:
-                            # Complete cached result available
-                            st.session_state.llm_result = {
-                                "data": cache_hit.response,
-                                "cypher_query": cypher_query,
-                                "cached": True,
-                                "strategy": cache_hit.strategy,
-                                "confidence": cache_hit.confidence
-                            }
-                        else:
-                            # Execute the Cypher query
-                            st.info("Executing generated Cypher query...")
+                    cypher_query = cache_hit.cypher_query
+                    result = None # Inizializza result a None
+
+                    # Caso 1: Trovato un risultato completo in cache
+                    if cache_hit.response:
+                        st.session_state.llm_result = {
+                            "data": cache_hit.response,
+                            "cypher_query": cypher_query,
+                            "cached": True,
+                            "strategy": cache_hit.strategy,
+                            "confidence": cache_hit.confidence
+                        }
+                        st.success("🎉 Response trovata in cache!")
+                    else:
+                        # Caso 2: Trovata una query Cypher, ma non la response o la response era vuota
+                        # Questa parte viene eseguita solo se non c'è una response completa in cache
+                        if cypher_query and cache_hit.confidence > 0.0:
+                            st.info(f"Eseguendo query Cypher da cache ({cache_hit.strategy})...")
                             try:
-                                result = ask_neo4j_llm(
+                                # Prova ad eseguire la query Cypher
+                                current_result = ask_neo4j_llm(
                                     question=question,
                                     data_schema=graph_schema,
                                     override_cypher=cypher_query
                                 )
-                                
-                                if isinstance(result, dict) and result.get("data"):
-                                    # Store the complete result in cache
-                                    success = st.session_state.qdrant_cache.store_query_and_response(
+
+                                if current_result and current_result.get("data"):
+                                    # Verifica se i risultati sono vuoti
+                                    if isinstance(current_result["data"], list) and not current_result["data"]:
+                                        st.warning("Query Cypher eseguita ma non ha trovato risultati. Fallback all'LLM...")
+                                        result = None  # Resetta il risultato per attivare il fallback
+                                    else:
+                                        # Abbiamo risultati non vuoti, memorizzali in cache e usali
+                                        st.session_state.qdrant_cache.store_query_and_response(
+                                            question=question,
+                                            cypher_query=cypher_query,
+                                            response=current_result["data"],
+                                            template_used=cache_hit.template_used
+                                        )
+                                        st.session_state.llm_result = {
+                                            **current_result,
+                                            "cached": True, # È un hit della cache semantica (query Cypher)
+                                            "strategy": cache_hit.strategy,
+                                            "confidence": cache_hit.confidence
+                                        }
+                                        st.success("✅ Query eseguita con successo dal database!")
+                                        result = current_result # Imposta result per evitare il fallback LLM
+                                else:
+                                    st.warning("Nessun risultato dalla query Cypher. Fallback all'LLM...")
+                                    result = None # Attiva il fallback LLM
+                            except Exception as e:
+                                st.error(f"Errore nell'esecuzione della query Cypher: {e}. Fallback all'LLM...")
+                                result = None # Attiva il fallback LLM
+                        
+                        # Caso 3: Nessun match della cache (cypher_query vuota) o fallback da strategia precedente (result è None), usa l'LLM
+                        if not result: # Se 'result' è ancora None, significa che dobbiamo usare l'LLM
+                            st.info("Generando una nuova query con LLM...")
+                            try:
+                                result = ask_neo4j_llm(
+                                    question=question,
+                                    data_schema=graph_schema
+                                )
+                                if result and result.get("data"):
+                                    # Memorizza la nuova query e risposta in cache
+                                    st.session_state.qdrant_cache.store_query_and_response(
                                         question=question,
-                                        cypher_query=cypher_query,
-                                        response=result["data"],
-                                        template_used=cache_hit.template_used
+                                        cypher_query=result["cypher_query"],
+                                        response=result["data"]
                                     )
-                                    
-                                    if not success:
-                                        st.warning("Query executed but could not be stored in cache.")
-                                    
                                     st.session_state.llm_result = {
                                         **result,
-                                        "cached": cache_hit.strategy == "exact_match",
-                                        "strategy": cache_hit.strategy,
-                                        "confidence": cache_hit.confidence
+                                        "cached": False,
+                                        "strategy": "llm",
+                                        "confidence": 1.0
                                     }
+                                    st.success("🚀 Query generata e memorizzata in cache!")
                                 else:
-                                    st.warning("No results returned from query execution.")
+                                    st.warning("Nessun risultato dall'LLM.")
                                     st.session_state.llm_result = None
-                                    
                             except Exception as e:
-                                st.error(f"Error executing Cypher query: {e}")
+                                st.error(f"Errore con il modello LLM: {e}")
                                 st.session_state.llm_result = None
-                    else:
-                        # No cache hit, use LLM
-                        st.info("No suitable cache match found. Generating new Cypher query...")
-                        try:
-                            result = ask_neo4j_llm(
-                                question=question,
-                                data_schema=graph_schema
-                            )
-                            
-                            if isinstance(result, dict) and result.get("data"):
-                                # Store the new result in cache
-                                success = st.session_state.qdrant_cache.store_query_and_response(
-                                    question=question,
-                                    cypher_query=result["cypher_query"],
-                                    response=result["data"]
-                                )
-                                
-                                if success:
-                                    st.success("New query generated and stored in semantic cache.")
-                                else:
-                                    st.warning("Query generated but could not be stored in cache.")
-                                
-                                st.session_state.llm_result = {
-                                    **result,
-                                    "cached": False,
-                                    "strategy": "llm",
-                                    "confidence": 1.0
-                                }
-                            else:
-                                st.warning("No results returned from LLM.")
-                                st.session_state.llm_result = None
-                                
-                        except Exception as e:
-                            st.error(f"Error with LLM processing: {e}")
-                            st.session_state.llm_result = None
 
         # Display cache search result info
         if st.session_state.last_cache_hit:
@@ -339,37 +347,38 @@ def main():
     with col2:
         with st.sidebar.expander("Enhanced Cache Settings", expanded=True):
             st.subheader("Smart Cache Configuration")
-            
-            # Template matching threshold
-            template_threshold = st.slider(
+
+            # Inizializza e aggiorna i threshold tramite session_state
+            st.session_state.template_threshold = st.slider(
                 "Template Match Threshold",
                 min_value=0.5,
                 max_value=1.0,
-                value=0.75,
+                value=st.session_state.get('template_threshold', 0.75),
                 step=0.05,
                 format="%.2f",
+                key='template_threshold_slider',
                 help="Minimum confidence for template matching. Lower values allow more flexible matching.",
             )
-            
-            # Exact match threshold
-            exact_threshold = st.slider(
+
+            st.session_state.exact_threshold = st.slider(
                 "Exact Match Threshold",
                 min_value=0.9,
                 max_value=1.0,
-                value=0.95,
+                value=st.session_state.get('exact_threshold', 0.95),
                 step=0.01,
                 format="%.3f",
+                key='exact_threshold_slider',
                 help="Threshold for considering two queries as exact matches.",
             )
-            
-            # Similarity threshold
-            similarity_threshold = st.slider(
+
+            st.session_state.similarity_threshold = st.slider(
                 "Similarity Search Threshold",
                 min_value=0.7,
                 max_value=0.95,
-                value=0.8,
+                value=st.session_state.get('similarity_threshold', 0.8),
                 step=0.01,
                 format="%.3f",
+                key='similarity_threshold_slider',
                 help="Minimum similarity for fallback semantic search.",
             )
             
