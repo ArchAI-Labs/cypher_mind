@@ -153,7 +153,7 @@ class SemanticCache:
         self.template_collection = f"{collection_name}_templates"
         
         # Template migliorati con pattern e priorità
-        self.query_templates = self._load_enhanced_templates()
+        self.query_templates = self._load_enhanced_templates(file_path=os.getenv("TEMPLATE_QUERY"))
         
         # Inizializzazione
         self._initialize_qdrant()
@@ -162,107 +162,28 @@ class SemanticCache:
         self.frequent_queries_cache = OrderedDict()
         self.max_frequent_cache = 100
 
-    def _load_enhanced_templates(self) -> List[QueryTemplate]:
-        """Carica template migliorati con pattern specifici"""
-        return [
-            QueryTemplate(
-                intent="get_top_users_by_project",
-                template="get top {count} users from project {project}",
-                parameters=["count", "project"],
-                cypher_template="MATCH (p:Person)-[:WORK_ON]->(proj:Project {name: '{project}'}) RETURN u LIMIT {count}",
-                priority=1,
-                aliases=["show first {count} users in project {project}", "list top {count} people from {project}"],
-                parameter_patterns={
-                    "count": r'\b(?:top|first)\s+(\d+)\b',
-                    "project": r'project\s+([A-Za-z0-9_]+)'
-                }
-            ),
-            QueryTemplate(
-                intent="list_projects_by_user",
-                template="list projects for user {user}",
-                parameters=["user"],
-                cypher_template="MATCH (p:Person {name: '{user}'})-[:WORK_ON]->(proj:Project) RETURN proj",
-                priority=1,
-                aliases=["show projects of {user}", "what projects does {user} work on"],
-                parameter_patterns={
-                    "user": r'(?:for|of|does)\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)'
-                }
-            ),
-            QueryTemplate(
-                intent="list_user_by_company",
-                template="list all people who work for company {company}",
-                parameters=["company"],
-                cypher_template="MATCH (p:Person)-[:WORKS_FOR]->(c:Company {name: '{company}'}) RETURN p",
-                priority=2,
-                aliases=["who works at {company}", "all staff from {company}", "find people in {company}", "employees of {company}"],
-                parameter_patterns={
-                    "company": r'(?:company|for)\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)'
-                }
-            ),
-            QueryTemplate(
-                intent="list_project_and_company_by_user",
-                template="find projects {user} works on and company he works for",
-                parameters=["user"],
-                cypher_template="MATCH (p:Person {name: '{user}'})-[:WORK_ON]->(proj:Project) OPTIONAL MATCH (p)-[:WORKS_FOR]->(comp:Company) RETURN proj.title AS Project, comp.name AS Company",
-                priority=3,
-                aliases=[
-                    "what projects is {user} involved in and where does he work",
-                    "show {user}'s projects and employer",
-                    "which company does {user} work for and what are his projects",
-                    "get {user}'s work details",
-                    "info on {user}'s projects and company"
-                ],
-                parameter_patterns={
-                    "user": r'(?:find\s+projects\s+|find\s+)?([A-Za-z]+(?:\s+[A-Za-z]+)?)\s+works'
-                }
-            ),
-            QueryTemplate(
-                intent="find_people_on_project_by_date_range",
-                template="find all the people working on the project {project} between {start_year} and {end_year}",
-                parameters=["project", "start_year", "end_year"],
-                cypher_template="MATCH (p:Person)-[w:WORK_ON]->(pr:Project {title: '{project}'}) "
-                                "WHERE date(w.start_date) <= date('{end_year}-12-31') "
-                                "AND (date(w.end_date) IS NULL OR date(w.end_date) >= date('{start_year}-01-01')) "
-                                "RETURN p.name AS PersonName, p.id_person AS PersonID",
-                priority=4,
-                aliases=[
-                    "who worked on project {project} from {start_year} to {end_year}",
-                    "list all individuals on {project} between {start_year} and {end_year}",
-                    "people working on {project} during {start_year} and {end_year}",
-                    "find workers for project {project} between years {start_year} and {end_year}",
-                    "show staff on {project} from {start_year} to {end_year}",
-                    "get everyone who worked on {project} from {start_year} until {end_year}"
-                ],
-                parameter_patterns={
-                    "project": r"project(?: called)?\s*(?:'([^']+)'|\"([^\"]+)\"|(\b[A-Za-z0-9\s-]+?)(?=\s+(?:between|from|during)))",
-                    "start_year": r"(?:between|from|during)\s+(\d{4})",
-                    "end_year": r"(?:and|to|until)\s+(\d{4})(?!\s*\d)"
-                }
-            ),
-            QueryTemplate(
-                intent="find_people_in_company_by_date_range",
-                template="find all the people who worked for {company} between {start_year} and {end_year}",
-                parameters=["company", "start_year", "end_year"],
-                cypher_template="MATCH (p:Person)-[w:WORKS_FOR]->(c:Company {name: '{company}'}) "
-                                "WHERE date(w.start_date) <= date('{end_year}-12-31') "
-                                "AND (date(w.end_date) IS NULL OR date(w.end_date) >= date('{start_year}-01-01')) "
-                                "RETURN p.name AS PersonName, p.id_person AS PersonID, c.name AS CompanyName",
-                priority=4,
-                aliases=[
-                    "who worked at {company} from {start_year} to {end_year}",
-                    "list all employees of {company} between {start_year} and {end_year}",
-                    "people employed by {company} during {start_year} and {end_year}",
-                    "find staff for {company} between years {start_year} and {end_year}",
-                    "show personnel at {company} from {start_year} to {end_year}",
-                    "get everyone who was at {company} from {start_year} until {end_year}"
-                ],
-                parameter_patterns={
-                    "company": r"(?:for|at|company(?: called|named)?)\s*(?:'([^']+)'|\"([^\"]+)\"|([A-Z][a-zA-Z\s-]+))(?=\s*(?:between|from|during|\.|\?|$))",
-                    "start_year": r"(?:between|from|during)\s+(\d{4})",
-                    "end_year": r"(?:and|to|until)\s+(\d{4})(?!\s*\d)"
-                }
-            ),
-        ]
+    def _load_enhanced_templates(self, file_path: str) -> List[QueryTemplate]:
+        """
+        Carica template migliorati da un file JSON.
+
+        :param file_path: Percorso del file JSON contenente i template.
+        :return: Una lista di oggetti QueryTemplate.
+        """
+        templates = []
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                for item in data:
+                    templates.append(QueryTemplate(**item))
+            logging.info(f"Successfully loaded {len(templates)} templates from {file_path}")
+        except FileNotFoundError:
+            logging.error(f"Template file not found at {file_path}. Using an empty template list.")
+        except json.JSONDecodeError as e:
+            logging.error(f"Error decoding JSON from {file_path}: {e}. Using an empty template list.")
+        except Exception as e:
+            logging.error(f"An unexpected error occurred while loading templates: {e}")
+
+        return templates
 
     def _initialize_qdrant(self):
         """Initialize Qdrant client and collections"""

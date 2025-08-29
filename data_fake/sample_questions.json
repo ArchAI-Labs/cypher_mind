@@ -1,7 +1,7 @@
 {
     "Select a question...": "",
     "List all the people working for...": "List all the people who work for 'Keller Inc'.",
-    "Find all the people working on...": "Find all the people working on 'Persistent scalable hardware' between 2020 and 2021.",
+    "Find all the people working on...": "Find all the people working on 'Persistent scalable hardware' between 2020 and 2021. The dates are strings.",
     "What projects..." : "What projects is Zachary Smith working on?",
     "Find the projects...":"Find the projects Kurt Carroll works on and what company he works for."
 }
