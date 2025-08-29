@@ -10,8 +10,20 @@ COPY . /app
 # Install dependencies from requirements.txt
 RUN pip install --no-cache-dir -r requirements_docker.txt
 
-# Expose port 7687 (Neo4j Bolt port)
+# Install spaCy English model
+RUN python -m spacy download en_core_web_sm
+
+# Verify installations
+RUN python -c "import spacy; nlp = spacy.load('en_core_web_sm'); print('✅ spaCy model ready')" && \
+    python -c "import fastembed; print('✅ FastEmbed ready')" && \
+    python -c "from qdrant_client import QdrantClient; print('✅ Qdrant client ready')"
+
+# Expose port
 EXPOSE 7687
 
-# Command to run the Python application
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD python -c "import spacy; spacy.load('en_core_web_sm')" || exit 1
+
+# Run application
 CMD ["python", "src/main.py"]
