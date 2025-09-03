@@ -10,7 +10,7 @@
 
 ArchAI - CypherMind is a system designed to bridge the gap between natural language and structured graph database queries. It enables users, regardless of their technical expertise, to interact with a Neo4j graph database using intuitive, natural language questions. The system translates these questions into Cypher queries, executes them against the database, and presents the results in a user-friendly format.
 
-The core purpose of this project is to simplify data retrieval from graph databases, making it accessible to a broader audience, including business analysts, domain experts, and non-technical users. By leveraging the power of large language models (LLMs), specifically Google's Gemini, the system automates the complex process of Cypher query construction.
+The core purpose of this project is to simplify data retrieval from graph databases, making it accessible to a broader audience, including business analysts, domain experts, and non-technical users. By leveraging the power of large language models (LLMs the system automates the complex process of Cypher query construction.
 
 This repository contains the complete implementation of the ArchAI - CypherMind system, including the Streamlit application, Gemini integration, semantic cache, and data import functionalities. Each internal module plays a crucial role in supporting the project's overall goals, from handling user input to optimizing query performance and ensuring data integrity.
 
