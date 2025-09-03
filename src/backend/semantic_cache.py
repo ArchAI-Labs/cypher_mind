@@ -206,7 +206,7 @@ class SemanticCache:
         # Initialize embedding model
         self._initialize_embedder()
         
-        logging.info("Enhanced Semantic Cache Initialized")
+        logging.info("Semantic Cache Initialized")
 
     def _create_collection_safe(self, collection_name: str):
         """Safely create collection with error handling"""

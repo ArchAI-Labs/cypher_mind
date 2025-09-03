@@ -17,8 +17,6 @@ from backend.utils.streamlit_app_utils import (
 )
 from backend.semantic_cache import SemanticCache, create_optimized_cache
 
-# Se hai codice che importa EnhancedSemanticCache, aggiungi questo alias
-# EnhancedSemanticCache = SemanticCache
 
 LOGO_PATH = "img/logo_cyphermind.png"
 
@@ -157,12 +155,12 @@ def initialize_cache():
 
 def main():
     st.image(LOGO_PATH, width=200)
-    st.title("ArchAI - CypherMind Enhanced")
-    st.subheader("Natural Language to Cypher with Smart Semantic Caching")
+    st.title("ArchAI - CypherMind")
+    st.subheader("Natural Language to Cypher")
 
-    # Initialize Enhanced Semantic Cache
+    # Initialize Semantic Cache
     if "qdrant_cache" not in st.session_state:
-        with st.spinner("Initializing enhanced semantic cache..."):
+        with st.spinner("Initializing semantic cache..."):
             st.session_state.qdrant_cache = initialize_cache()
             if st.session_state.qdrant_cache is None:
                 st.error("Failed to initialize semantic cache. Some features may be limited.")
@@ -238,12 +236,12 @@ def main():
                             "strategy": cache_hit.strategy,
                             "confidence": cache_hit.confidence
                         }
-                        st.success("🎉 Response trovata in cache!")
+                        st.success("🎉 Response found in cache!")
                     else:
                         # Caso 2: Trovata una query Cypher, ma non la response o la response era vuota
                         # Questa parte viene eseguita solo se non c'è una response completa in cache
                         if cypher_query and cache_hit.confidence > 0.0:
-                            st.info(f"Eseguendo query Cypher da cache ({cache_hit.strategy})...")
+                            st.info(f"Running Cypher queries from cache ({cache_hit.strategy})...")
                             try:
                                 # Prova ad eseguire la query Cypher
                                 current_result = ask_neo4j_llm(
@@ -255,7 +253,7 @@ def main():
                                 if current_result and current_result.get("data"):
                                     # Verifica se i risultati sono vuoti
                                     if isinstance(current_result["data"], list) and not current_result["data"]:
-                                        st.warning("Query Cypher eseguita ma non ha trovato risultati. Fallback all'LLM...")
+                                        st.warning("Cypher query executed but no results found. Fallback to LLM...")
                                         result = None  # Resetta il risultato per attivare il fallback
                                     else:
                                         # Abbiamo risultati non vuoti, memorizzali in cache e usali
@@ -271,18 +269,18 @@ def main():
                                             "strategy": cache_hit.strategy,
                                             "confidence": cache_hit.confidence
                                         }
-                                        st.success("✅ Query eseguita con successo dal database!")
+                                        st.success("✅ Query successfully executed from the database!")
                                         result = current_result # Imposta result per evitare il fallback LLM
                                 else:
-                                    st.warning("Nessun risultato dalla query Cypher. Fallback all'LLM...")
+                                    st.warning("No results from the Cypher query. Fallback to LLM...")
                                     result = None # Attiva il fallback LLM
                             except Exception as e:
-                                st.error(f"Errore nell'esecuzione della query Cypher: {e}. Fallback all'LLM...")
+                                st.error(f"Error executing Cypher query: {e}. Fallback to LLM...")
                                 result = None # Attiva il fallback LLM
                         
                         # Caso 3: Nessun match della cache (cypher_query vuota) o fallback da strategia precedente (result è None), usa l'LLM
                         if not result: # Se 'result' è ancora None, significa che dobbiamo usare l'LLM
-                            st.info("Generando una nuova query con LLM...")
+                            st.info("Generating a new query with LLM...")
                             try:
                                 result = ask_neo4j_llm(
                                     question=question,
@@ -301,12 +299,12 @@ def main():
                                         "strategy": "llm",
                                         "confidence": 1.0
                                     }
-                                    st.success("🚀 Query generata e memorizzata in cache!")
+                                    st.success("🚀 Query generated and cached!")
                                 else:
-                                    st.warning("Nessun risultato dall'LLM.")
+                                    st.warning("No results from the LLM.")
                                     st.session_state.llm_result = None
                             except Exception as e:
-                                st.error(f"Errore con il modello LLM: {e}")
+                                st.error(f"Error with the LLM model: {e}")
                                 st.session_state.llm_result = None
 
         # Display cache search result info
@@ -345,7 +343,7 @@ def main():
                 st.write("No results found.")
 
     with col2:
-        with st.sidebar.expander("Enhanced Cache Settings", expanded=True):
+        with st.sidebar.expander("Cache Settings", expanded=True):
             st.subheader("Smart Cache Configuration")
 
             # Inizializza e aggiorna i threshold tramite session_state
@@ -383,7 +381,7 @@ def main():
             )
             
             st.info(
-                "🧠 **Enhanced Cache Strategies:**\n\n"
+                "🧠 **Cache Strategies:**\n\n"
                 "1. **Template Matching** - Pattern-based Cypher generation\n"
                 "2. **Exact Match** - Previously cached identical queries\n" 
                 "3. **Semantic Signature** - Structurally similar queries\n"

@@ -1,6 +1,6 @@
 {
     "data_fake/relations/work_on.csv": [
-        "WORK_ON",
+        "WORKS_ON",
         "Person",
         "Project",
         [
