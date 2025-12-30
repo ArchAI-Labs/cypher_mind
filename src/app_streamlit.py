@@ -68,6 +68,8 @@ st.markdown(
         .exact-badge {{ background-color: #17a2b8; }}
         .similar-badge {{ background-color: #ffc107; color: black; }}
         .signature-badge {{ background-color: #6f42c1; }}
+        .fuzzy-badge {{ background-color: #fd7e14; }}
+        .recent-badge {{ background-color: #20c997; }}
         .llm-badge {{ background-color: #dc3545; }}
         .performance-metric {{
             background-color: #f8f9fa;
@@ -88,13 +90,24 @@ def get_strategy_badge(strategy):
         "exact_match": '<span class="strategy-badge exact-badge">EXACT MATCH</span>',
         "semantic_similarity": '<span class="strategy-badge similar-badge">SIMILAR</span>',
         "semantic_signature": '<span class="strategy-badge signature-badge">SIGNATURE</span>',
+        "fuzzy_match": '<span class="strategy-badge fuzzy-badge">FUZZY MATCH</span>',  # NUOVO
+        "recent_cache": '<span class="strategy-badge recent-badge">RECENT</span>',  # NUOVO
         "llm": '<span class="strategy-badge llm-badge">LLM GENERATED</span>'
     }
     return badges.get(strategy, f'<span class="strategy-badge">{strategy.upper()}</span>')
 
 def display_cache_result_info(cache_hit):
     """Display information about cache search results using new CacheHit object"""
-    if cache_hit.strategy == "template_match":
+    if cache_hit.strategy == "recent_cache":
+        st.markdown(
+            f'<div class="cache-info">'
+            f'{get_strategy_badge("recent_cache")}'
+            f'<strong>Found in recent cache!</strong> Retrieved from last 3 queries (in-memory).'
+            f'<br><small>Confidence: {cache_hit.confidence:.2%}</small>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+    elif cache_hit.strategy == "template_match":
         st.markdown(
             f'<div class="cache-info">'
             f'{get_strategy_badge("template_match")}'
@@ -121,8 +134,18 @@ def display_cache_result_info(cache_hit):
             f'</div>',
             unsafe_allow_html=True
         )
+    elif cache_hit.strategy == "fuzzy_match":
+        st.markdown(
+            f'<div class="cache-info">'
+            f'{get_strategy_badge("fuzzy_match")}'
+            f'<strong>Fuzzy match found!</strong> Using string similarity to find similar query.'
+            f'<br><small>Confidence: {cache_hit.confidence:.2%}</small>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
     elif cache_hit.strategy == "no_match":
         st.info("No suitable cache match found. Will use LLM to generate new query.")
+
 
 def initialize_cache():
     """Initialize the enhanced semantic cache with better error handling"""
@@ -215,13 +238,15 @@ def main():
                     template_threshold = st.session_state.get('template_threshold', 0.8)
                     exact_threshold = st.session_state.get('exact_threshold', 0.95)
                     similarity_threshold = st.session_state.get('similarity_threshold', 0.8)
+                    fuzzy_threshold = st.session_state.get('fuzzy_threshold', 85.0)  # AGGIUNTO
 
                     # Usa l'enhanced smart search con i threshold dell'interfaccia utente
                     cache_hit = st.session_state.qdrant_cache.smart_search(
                         question,
                         template_threshold=template_threshold,
                         exact_threshold=exact_threshold,
-                        similarity_threshold=similarity_threshold
+                        similarity_threshold=similarity_threshold,
+                        fuzzy_threshold=fuzzy_threshold
                     )
                     st.session_state.last_cache_hit = cache_hit
                     cypher_query = cache_hit.cypher_query
@@ -369,6 +394,17 @@ def main():
                 help="Threshold for considering two queries as exact matches.",
             )
 
+            st.session_state.fuzzy_threshold = st.slider(
+                "Fuzzy Match Threshold",
+                min_value=70.0,
+                max_value=100.0,
+                value=st.session_state.get('fuzzy_threshold', 85.0),
+                step=1.0,
+                format="%.1f",
+                key='fuzzy_threshold_slider',
+                help="Minimum string similarity (Levenshtein) for fuzzy matching (70-100).",
+            )
+
             st.session_state.similarity_threshold = st.slider(
                 "Similarity Search Threshold",
                 min_value=0.7,
@@ -382,10 +418,11 @@ def main():
             
             st.info(
                 "🧠 **Cache Strategies:**\n\n"
+                "0. **Recent Cache** - Last 3 queries (in-memory)\n"
                 "1. **Template Matching** - Pattern-based Cypher generation\n"
                 "2. **Exact Match** - Previously cached identical queries\n" 
-                "3. **Semantic Signature** - Structurally similar queries\n"
-                "4. **Similarity Search** - Semantically related queries\n"
+                "3. **Semantic Similarity** - Semantically related queries\n"
+                "4. **Fuzzy Matching** - String similarity (Levenshtein)\n"
                 "5. **LLM Fallback** - Generate new query when needed"
             )
 
