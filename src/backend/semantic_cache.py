@@ -265,7 +265,6 @@ class SemanticCache:
             logging.error(f"Error initializing embedder: {e}")
             raise
 
-    # ===== NUOVO METODO: Sincronizza template in Qdrant =====
     def _sync_templates_to_qdrant(self):
         """
         Sincronizza i template caricati da file nella collection Qdrant.
@@ -350,7 +349,7 @@ class SemanticCache:
         except Exception as e:
             logging.error(f"Error generating embedding for text '{text[:50]}...': {e}")
             return None
-
+    
     def find_best_template_match(self, question: str, threshold: float = 0.75) -> Optional[Tuple[QueryTemplate, Dict[str, str], float]]:
         """Trova il miglior template match con scoring migliorato"""
         normalized_question = self.normalize_question(question)
@@ -443,7 +442,6 @@ class SemanticCache:
         intersection = question_words & template_words
         return len(intersection) / len(template_words)
 
-    # ===== NUOVO METODO: Fuzzy matching =====
     def _fuzzy_search(self, question: str, threshold: float = 85.0) -> Optional[CacheHit]:
         """
         Cerca query simili usando fuzzy string matching (Levenshtein distance).
@@ -494,7 +492,6 @@ class SemanticCache:
             logging.error(f"Error in fuzzy search: {e}")
             return None
 
-    # ===== NUOVO METODO: Check recent results cache =====
     def _check_recent_results_cache(self, question: str) -> Optional[CacheHit]:
         """
         Controlla la cache in memoria degli ultimi 3 risultati.
@@ -522,7 +519,6 @@ class SemanticCache:
         
         return None
 
-    # ===== NUOVO METODO: Store in recent results cache =====
     def _store_in_recent_cache(self, question: str, cypher_query: str, response: Optional[str], template_used: Optional[str]):
         """
         Memorizza un risultato nella cache in memoria degli ultimi 3.
@@ -579,16 +575,16 @@ class SemanticCache:
         normalized = re.sub(r'[.!?]+$', '', normalized)
         
         return normalized
-
+    
     def smart_search(self, question: str, template_threshold: float = 0.8, exact_threshold: float = 0.95, similarity_threshold: float = 0.8, fuzzy_threshold: float = 85.0) -> CacheHit:
         """
         Ricerca intelligente con strategia a cascata:
-        1. Recent results cache (ultimi 3, in memoria)
-        2. Template matching
-        3. Exact cache hit (Qdrant)
-        4. Semantic similarity (Qdrant)
-        5. Fuzzy matching (NUOVO)
-        6. No match -> LLM fallback
+        0. Recent results cache (ultimi 3, in memoria)
+        1. Template matching
+        2. Exact cache hit (Qdrant)
+        3. Semantic similarity (Qdrant)
+        4. Fuzzy matching (NUOVO)
+        5. No match -> LLM fallback
         """
         if not question or not question.strip():
             return CacheHit("", None, 0.0, "invalid_input")
@@ -697,3 +693,205 @@ class SemanticCache:
         
         # No match found
         return CacheHit("", None, 0.0, "no_match")
+
+    def generate_cypher_from_template(self, template: QueryTemplate, parameters: Dict[str, str]) -> str:
+        """
+        Genera query Cypher da template con validazione e sanitizzazione parametri.
+        
+        Args:
+            template: QueryTemplate contenente il cypher_template
+            parameters: Dizionario con i parametri da sostituire
+            
+        Returns:
+            str: Query Cypher con parametri sostituiti
+            
+        Raises:
+            ValueError: Se il template non ha cypher_template definito
+        """
+        if not template.cypher_template:
+            raise ValueError(f"Template '{template.intent}' has no cypher_template defined")
+        
+        cypher_query = template.cypher_template
+        
+        # Sostituisci parametri con escape per sicurezza
+        for param, value in parameters.items():
+            # Sanitizza il valore (rimuovi caratteri pericolosi)
+            # Mantieni solo caratteri alfanumerici, spazi, trattini e underscore
+            safe_value = re.sub(r'[^\w\s-]', '', str(value))
+            
+            # Sostituisci nel template
+            cypher_query = cypher_query.replace(f"{{{param}}}", safe_value)
+        
+        return cypher_query
+
+    def _search_cached_response(self, cypher_query: str) -> Optional[str]:
+        """Cerca una response cached per una specifica query Cypher"""
+        query_hash = hashlib.md5(cypher_query.encode()).hexdigest()
+        
+        # Cerca nei punti esistenti
+        filter_condition = Filter(
+            must=[
+                FieldCondition(
+                    key="cypher_hash",
+                    match=MatchValue(value=query_hash)
+                )
+            ]
+        )
+        
+        try:
+            results = self.qdrant_client.scroll(
+                collection_name=self.collection_name,
+                scroll_filter=filter_condition,
+                limit=1,
+                with_payload=True
+            )[0]
+            
+            if results:
+                return results[0].payload.get("response")
+        except Exception as e:
+            logging.debug(f"Error searching cached response: {e}")
+        
+        return None
+
+    def store_query_and_response(self, question: str, cypher_query: str, response: str, template_used: Optional[str] = None) -> bool:
+        """Store query con metadati migliorati - Doppia cache: Qdrant + Recent cache"""
+        if not all([question, cypher_query]):
+            logging.warning("Invalid input for storing query")
+            return False
+            
+        try:
+            question_embedding = self.get_embedding(question)
+            if question_embedding is None:
+                logging.error("Failed to generate embedding for question")
+                return False
+            
+            normalized_question = self.normalize_question(question)
+            cypher_hash = hashlib.md5(cypher_query.encode()).hexdigest()
+            
+            # ===== 1. Store in Qdrant (persistenza) =====
+            point = PointStruct(
+                id=str(uuid.uuid4()),
+                vector=question_embedding,
+                payload={
+                    "question": question,
+                    "normalized_question": normalized_question,
+                    "cypher_query": cypher_query,
+                    "cypher_hash": cypher_hash,
+                    "response": response,
+                    "template_used": template_used,
+                    "timestamp": datetime.datetime.now().isoformat(),
+                    "usage_count": 1,
+                    "response_length": len(response) if response else 0
+                },
+            )
+            
+            self.qdrant_client.upsert(
+                collection_name=self.collection_name,
+                wait=True,
+                points=[point],
+            )
+            
+            # ===== 2. Store in recent cache (ultimi 3, in memoria) =====
+            self._store_in_recent_cache(question, cypher_query, response, template_used)
+            
+            logging.info(f"Successfully stored query in both Qdrant and recent cache: {question[:50]}...")
+            return True
+            
+        except Exception as e:
+            logging.error(f"Error storing query and response: {e}")
+            return False
+
+    def _update_usage_count_efficient(self, point_id: str):
+        """Aggiorna contatore uso in modo efficiente"""
+        try:
+            # Per ora incrementiamo un contatore locale
+            # In futuro si potrebbe implementare un batch update
+            pass
+        except Exception as e:
+            logging.debug(f"Error updating usage count: {e}")
+
+    def get_performance_stats(self) -> Dict:
+        """Statistiche performance dettagliate con informazioni sulla doppia cache"""
+        try:
+            collection_info = self.qdrant_client.get_collection(self.collection_name)
+            template_info = self.qdrant_client.get_collection(self.template_collection)
+            
+            total_requests = self.cache_hits + self.cache_misses
+            cache_hit_rate = (self.cache_hits / total_requests * 100) if total_requests > 0 else 0
+            
+            stats = {
+                "cache_performance": {
+                    "embedding_cache_hits": self.cache_hits,
+                    "embedding_cache_misses": self.cache_misses,
+                    "hit_rate_percentage": round(cache_hit_rate, 2),
+                    "template_hits": self.template_hits,
+                    "fuzzy_hits": self.fuzzy_hits,  # NUOVO
+                    "recent_cache_hits": self.recent_cache_hits  # NUOVO
+                },
+                "storage": {
+                    "total_cached_queries": collection_info.points_count,
+                    "templates_in_qdrant": template_info.points_count,  # NUOVO
+                    "embedding_cache_size": len(self.embedding_cache),
+                    "frequent_queries_cache_size": len(self.frequent_queries_cache),
+                    "recent_results_cache_size": len(self.recent_results_cache),  # NUOVO
+                    "vector_size": self.vector_size
+                },
+                "model_info": {
+                    "embedder_model": self.embedder,
+                    "nlp_enabled": self.param_extractor.use_nlp,
+                    "fuzzy_matching_available": FUZZY_AVAILABLE  # NUOVO
+                },
+                "efficiency": {
+                    "templates_loaded": len(self.query_templates),
+                    "avg_template_priority": sum(t.priority for t in self.query_templates) / len(self.query_templates) if self.query_templates else 0
+                }
+            }
+            
+            return stats
+            
+        except Exception as e:
+            logging.error(f"Error getting performance stats: {e}")
+            return {"error": str(e)}
+
+    def clear_caches(self):
+        """Pulisci tutte le cache in-memory (mantiene Qdrant)"""
+        self.embedding_cache.clear()
+        self.frequent_queries_cache.clear()
+        self.recent_results_cache.clear()  # NUOVO
+        self.cache_hits = 0
+        self.cache_misses = 0
+        self.template_hits = 0
+        self.fuzzy_hits = 0  # NUOVO
+        self.recent_cache_hits = 0  # NUOVO
+        logging.info("All in-memory caches cleared (Qdrant data preserved)")
+
+
+# Funzione di utilità per inizializzazione rapida
+def create_optimized_cache(collection_name: str = "semantic_cache", **kwargs) -> SemanticCache:
+    """
+    Crea una cache semantica ottimizzata con configurazione di default.
+    
+    Args:
+        collection_name: Nome della collection Qdrant
+        **kwargs: Parametri opzionali (mode, embedder, vector_size)
+    
+    Returns:
+        SemanticCache: Istanza configurata della cache semantica
+    
+    Example:
+        >>> cache = create_optimized_cache("my_cache", mode="memory")
+        >>> cache = create_optimized_cache("prod_cache", mode="cloud", vector_size=512)
+    """
+    defaults = {
+        "mode": os.getenv("QDRANT_MODE", "memory"),
+        "embedder": os.getenv("EMBEDDER", "sentence-transformers/all-MiniLM-L6-v2"),
+        "vector_size": int(os.getenv("VECTOR_SIZE", "384"))
+    }
+    defaults.update(kwargs)
+    
+    return SemanticCache(
+        collection_name=collection_name,
+        mode=defaults["mode"],
+        embedder=defaults["embedder"],
+        vector_size=defaults["vector_size"]
+    )
