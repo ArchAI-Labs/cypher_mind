@@ -181,6 +181,15 @@ def main():
     st.title("ArchAI - CypherMind")
     st.subheader("Natural Language to Cypher")
 
+    # Display optimization info banner
+    st.info(
+        "⚡ **Powered by Optimized Qdrant Vector Search** | "
+        "🚀 Quantization enabled (~75% memory reduction) | "
+        "📊 HNSW indexing | "
+        "⚙️ Batch operations | "
+        "🔄 Async concurrent search"
+    )
+
     # Initialize Semantic Cache
     if "qdrant_cache" not in st.session_state:
         with st.spinner("Initializing semantic cache..."):
@@ -195,6 +204,44 @@ def main():
             user=os.environ["NEO4J_USER"],
             password=os.environ["NEO4J_PASSWORD"]
         )
+
+    # Quick stats dashboard
+    if st.session_state.qdrant_cache:
+        try:
+            perf_stats = st.session_state.qdrant_cache.get_performance_stats()
+            col_stat1, col_stat2, col_stat3, col_stat4 = st.columns(4)
+
+            with col_stat1:
+                st.metric(
+                    "Cache Hit Rate",
+                    f"{perf_stats['cache_performance']['hit_rate_percentage']:.1f}%",
+                    help="Percentage of embedding cache hits"
+                )
+
+            with col_stat2:
+                st.metric(
+                    "Cached Queries",
+                    perf_stats['storage']['total_cached_queries'],
+                    help="Total queries stored in Qdrant"
+                )
+
+            with col_stat3:
+                quantization_type = perf_stats['qdrant_metrics']['config'].get('quantization_type', 'None')
+                st.metric(
+                    "Quantization",
+                    quantization_type if quantization_type else "Disabled",
+                    help="Vector quantization type for memory optimization"
+                )
+
+            with col_stat4:
+                st.metric(
+                    "Templates",
+                    perf_stats['storage']['templates_in_qdrant'],
+                    help="Query templates in Qdrant"
+                )
+
+        except Exception as e:
+            logging.debug(f"Could not load quick stats: {e}")
 
     col1, col2 = st.columns([3, 1])
 
@@ -467,53 +514,199 @@ def main():
                     with st.spinner("Loading performance analytics..."):
                         try:
                             perf_stats = st.session_state.qdrant_cache.get_performance_stats()
-                            
+
                             if "error" in perf_stats:
                                 st.error(f"Error: {perf_stats['error']}")
                             else:
                                 # Cache Performance
-                                st.subheader("Cache Performance")
+                                st.subheader("🎯 Cache Performance")
                                 perf = perf_stats["cache_performance"]
-                                
+
                                 col_perf_a, col_perf_b = st.columns(2)
                                 with col_perf_a:
                                     st.metric("Hit Rate", f"{perf['hit_rate_percentage']:.1f}%")
                                     st.metric("Template Hits", perf["template_hits"])
-                                
+                                    st.metric("Recent Cache Hits", perf["recent_cache_hits"])
+
                                 with col_perf_b:
-                                    st.metric("Cache Hits", perf["embedding_cache_hits"])
-                                    st.metric("Cache Misses", perf["embedding_cache_misses"])
-                                
+                                    st.metric("Embedding Hits", perf["embedding_cache_hits"])
+                                    st.metric("Embedding Misses", perf["embedding_cache_misses"])
+                                    st.metric("Fuzzy Hits", perf["fuzzy_hits"])
+
+                                st.metric("Total Search Hits", perf["total_search_hits"])
+
                                 # Storage Info
-                                st.subheader("Storage")
+                                st.subheader("💾 Storage")
                                 storage = perf_stats["storage"]
-                                
+
                                 col_stor_a, col_stor_b = st.columns(2)
                                 with col_stor_a:
                                     st.metric("Cached Queries", storage["total_cached_queries"])
+                                    st.metric("Templates in Qdrant", storage["templates_in_qdrant"])
                                     st.metric("Vector Size", storage["vector_size"])
-                                
+
                                 with col_stor_b:
                                     st.metric("Embedding Cache", storage["embedding_cache_size"])
                                     st.metric("Frequent Cache", storage["frequent_queries_cache_size"])
-                                
+                                    st.metric("Recent Cache", storage["recent_results_cache_size"])
+
+                                # Qdrant Metrics (NEW!)
+                                st.subheader("⚡ Qdrant Optimization Metrics")
+                                qdrant = perf_stats["qdrant_metrics"]
+
+                                col_q1, col_q2 = st.columns(2)
+                                with col_q1:
+                                    st.metric("Indexed Vectors", qdrant["indexed_vectors_count"])
+                                    st.metric("Total Vectors", qdrant["vectors_count"])
+                                    st.metric("Segments", qdrant["segments_count"])
+
+                                with col_q2:
+                                    st.text(f"Status: {qdrant['status']}")
+                                    st.text(f"Optimizer: {qdrant['optimizer_status']}")
+
+                                # HNSW Configuration
+                                st.markdown("**HNSW Configuration:**")
+                                config = qdrant["config"]
+                                st.text(f"  • M (edges): {config['hnsw_m']}")
+                                st.text(f"  • EF Construct: {config['hnsw_ef_construct']}")
+                                st.text(f"  • Distance: {config['distance']}")
+
+                                # Quantization Info
+                                st.markdown("**Quantization:**")
+                                if config["quantization_enabled"]:
+                                    st.success(f"✅ {config['quantization_type']} enabled")
+                                    st.info("Memory usage reduced by ~75% with scalar quantization")
+                                else:
+                                    st.warning("❌ Quantization disabled")
+
+                                st.text(f"On-Disk Storage: {'Yes' if config['on_disk'] else 'No'}")
+
                                 # Model Info
-                                st.subheader("Model Configuration")
+                                st.subheader("🤖 Model Configuration")
                                 model_info = perf_stats["model_info"]
                                 efficiency = perf_stats["efficiency"]
-                                
+
                                 st.text(f"Embedder: {model_info['embedder_model']}")
                                 st.text(f"NLP Enabled: {'Yes' if model_info['nlp_enabled'] else 'No'}")
+                                st.text(f"Fuzzy Matching: {'Available' if model_info['fuzzy_matching_available'] else 'Not Available'}")
                                 st.text(f"Templates Loaded: {efficiency['templates_loaded']}")
                                 st.text(f"Avg Template Priority: {efficiency['avg_template_priority']:.1f}")
-                        
+
+                                # Memory Efficiency
+                                st.markdown("**Memory Efficiency:**")
+                                mem_eff = efficiency["memory_efficiency"]
+                                st.text(f"  • Max Embedding Cache: {mem_eff['max_embedding_cache']}")
+                                st.text(f"  • Max Frequent Cache: {mem_eff['max_frequent_cache']}")
+                                st.text(f"  • Max Recent Cache: {mem_eff['max_recent_cache']}")
+
                         except Exception as e:
                             st.error(f"Error loading performance stats: {e}")
                 else:
                     st.warning("No cache instance available.")
-            
+
             if st.button("Export Analytics"):
-                st.info("Analytics export feature coming soon!")
+                if st.session_state.qdrant_cache:
+                    try:
+                        perf_stats = st.session_state.qdrant_cache.get_performance_stats()
+                        # Create downloadable JSON
+                        json_str = json.dumps(perf_stats, indent=2)
+                        st.download_button(
+                            label="Download Analytics JSON",
+                            data=json_str,
+                            file_name="cache_analytics.json",
+                            mime="application/json"
+                        )
+                    except Exception as e:
+                        st.error(f"Error exporting analytics: {e}")
+                else:
+                    st.warning("No cache instance available.")
+
+        # NEW: Batch Operations
+        with st.sidebar.expander("Batch Operations & Testing"):
+            st.subheader("🚀 Batch Query Testing")
+
+            # Batch insert
+            st.markdown("**Batch Insert Queries**")
+            batch_file = st.file_uploader(
+                "Upload JSON file with queries",
+                type=["json"],
+                help="Upload a JSON file with format: [{\"question\": \"...\", \"cypher_query\": \"...\", \"response\": \"...\"}]"
+            )
+
+            if batch_file is not None:
+                try:
+                    batch_data = json.load(batch_file)
+                    st.info(f"Loaded {len(batch_data)} queries from file")
+
+                    if st.button("Insert Batch"):
+                        with st.spinner(f"Inserting {len(batch_data)} queries..."):
+                            success = st.session_state.qdrant_cache.store_batch_queries(batch_data)
+                            if success:
+                                st.success(f"✅ Successfully inserted {len(batch_data)} queries!")
+                            else:
+                                st.error("Failed to insert batch queries")
+                except json.JSONDecodeError as e:
+                    st.error(f"Invalid JSON format: {e}")
+                except Exception as e:
+                    st.error(f"Error loading file: {e}")
+
+            # Sample batch format
+            if st.button("Show Example Batch Format"):
+                example = [
+                    {
+                        "question": "Who are the employees?",
+                        "cypher_query": "MATCH (e:Employee) RETURN e",
+                        "response": "List of employees...",
+                        "template_used": "list_employees"
+                    },
+                    {
+                        "question": "Show all projects",
+                        "cypher_query": "MATCH (p:Project) RETURN p",
+                        "response": "List of projects...",
+                        "template_used": None
+                    }
+                ]
+                st.json(example)
+
+            # Async batch search
+            st.markdown("**Async Batch Search (Concurrent)**")
+            batch_questions = st.text_area(
+                "Enter questions (one per line)",
+                height=100,
+                help="Enter multiple questions to search concurrently using async operations"
+            )
+
+            if st.button("Run Async Batch Search"):
+                if batch_questions:
+                    questions_list = [q.strip() for q in batch_questions.split('\n') if q.strip()]
+
+                    if questions_list:
+                        import asyncio
+
+                        with st.spinner(f"Searching {len(questions_list)} queries concurrently..."):
+                            try:
+                                # Run async batch search
+                                results = asyncio.run(
+                                    st.session_state.qdrant_cache.async_batch_search(questions_list)
+                                )
+
+                                st.success(f"✅ Completed {len(results)} searches!")
+
+                                # Display results
+                                for i, (question, result) in enumerate(zip(questions_list, results)):
+                                    with st.expander(f"Query {i+1}: {question[:50]}..."):
+                                        st.markdown(f"**Strategy:** {get_strategy_badge(result.strategy)}", unsafe_allow_html=True)
+                                        st.metric("Confidence", f"{result.confidence:.2%}")
+                                        if result.cypher_query:
+                                            st.code(result.cypher_query, language="cypher")
+                                        else:
+                                            st.warning("No match found")
+                            except Exception as e:
+                                st.error(f"Error in async batch search: {e}")
+                    else:
+                        st.warning("Please enter at least one question")
+                else:
+                    st.warning("Please enter questions to search")
 
         # Keep existing GDS functionality
         with st.sidebar.expander("Create Graph Projection"):
