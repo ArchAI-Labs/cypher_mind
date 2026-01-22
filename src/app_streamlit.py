@@ -15,7 +15,7 @@ from backend.utils.streamlit_app_utils import (
     format_results_as_table,
     generate_sample_questions,
 )
-from backend.semantic_cache import SemanticCache, create_optimized_cache
+from backend.semantic_cache import SemanticCache, create_optimized_cache, CacheHit
 
 
 LOGO_PATH = "img/logo_cyphermind.png"
@@ -139,6 +139,15 @@ def display_cache_result_info(cache_hit):
             f'<div class="cache-info">'
             f'{get_strategy_badge("fuzzy_match")}'
             f'<strong>Fuzzy match found!</strong> Using string similarity to find similar query.'
+            f'<br><small>Confidence: {cache_hit.confidence:.2%}</small>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+    elif cache_hit.strategy == "llm":
+        st.markdown(
+            f'<div class="cache-info">'
+            f'{get_strategy_badge("llm")}'
+            f'<strong>New query generated!</strong> No cache match found, used LLM to generate fresh Cypher query.'
             f'<br><small>Confidence: {cache_hit.confidence:.2%}</small>'
             f'</div>',
             unsafe_allow_html=True
@@ -349,7 +358,7 @@ def main():
                             except Exception as e:
                                 st.error(f"Error executing Cypher query: {e}. Fallback to LLM...")
                                 result = None # Attiva il fallback LLM
-                        
+
                         # Caso 3: Nessun match della cache (cypher_query vuota) o fallback da strategia precedente (result è None), usa l'LLM
                         if not result: # Se 'result' è ancora None, significa che dobbiamo usare l'LLM
                             st.info("Generating a new query with LLM...")
@@ -371,6 +380,14 @@ def main():
                                         "strategy": "llm",
                                         "confidence": 1.0
                                     }
+                                    # Update last_cache_hit to reflect that LLM was actually used
+                                    st.session_state.last_cache_hit = CacheHit(
+                                        cypher_query=result["cypher_query"],
+                                        response=result["data"],
+                                        confidence=1.0,
+                                        strategy="llm",
+                                        template_used=None
+                                    )
                                     st.success("🚀 Query generated and cached!")
                                 else:
                                     st.warning("No results from the LLM.")
@@ -386,14 +403,6 @@ def main():
         # Display results
         if st.session_state.llm_result:
             result = st.session_state.llm_result
-            strategy = result.get("strategy", "unknown")
-            confidence = result.get("confidence", 0.0)
-            
-            st.markdown(
-                f'{get_strategy_badge(strategy)} Query processed successfully! '
-                f'<small>(Confidence: {confidence:.2%})</small>', 
-                unsafe_allow_html=True
-            )
 
             st.write("**Cypher Query:**")
             st.code(result["cypher_query"], language="cypher")
@@ -467,10 +476,11 @@ def main():
                 "🧠 **Cache Strategies:**\n\n"
                 "0. **Recent Cache** - Last 3 queries (in-memory)\n"
                 "1. **Template Matching** - Pattern-based Cypher generation\n"
-                "2. **Exact Match** - Previously cached identical queries\n" 
-                "3. **Semantic Similarity** - Semantically related queries\n"
-                "4. **Fuzzy Matching** - String similarity (Levenshtein)\n"
-                "5. **LLM Fallback** - Generate new query when needed"
+                "2. **Exact Match** - Previously cached identical queries\n"
+                "3. **Semantic Signature** - Structural NLP similarity\n"
+                "4. **Semantic Similarity** - Semantically related queries\n"
+                "5. **Fuzzy Matching** - String similarity (Levenshtein)\n"
+                "6. **LLM Fallback** - Generate new query when needed"
             )
 
         with st.sidebar.expander("Cache Management"):

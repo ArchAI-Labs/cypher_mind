@@ -657,6 +657,66 @@ class SemanticCache:
             logging.error(f"Error in fuzzy search: {e}")
             return None
 
+    def _find_best_signature_match(self, question: str, candidates: List) -> Optional[any]:
+        """
+        Find best structural/signature match using NLP analysis.
+        Looks for queries with similar intent patterns and structure.
+
+        :param question: Query to analyze
+        :param candidates: List of candidate points from Qdrant
+        :return: Best matching point or None
+        """
+        if not self.param_extractor.use_nlp or not candidates:
+            return candidates[0] if candidates else None
+
+        try:
+            # Parse question with NLP
+            question_doc = self.param_extractor.nlp(question.lower())
+
+            # Extract signature features
+            question_verbs = {token.lemma_ for token in question_doc if token.pos_ == "VERB"}
+            question_nouns = {token.lemma_ for token in question_doc if token.pos_ in ["NOUN", "PROPN"]}
+            question_entities = {ent.label_ for ent in question_doc.ents}
+
+            best_match = None
+            best_score = 0.0
+
+            for candidate in candidates:
+                cached_question = candidate.payload.get("question", "")
+                cached_doc = self.param_extractor.nlp(cached_question.lower())
+
+                # Extract cached signature features
+                cached_verbs = {token.lemma_ for token in cached_doc if token.pos_ == "VERB"}
+                cached_nouns = {token.lemma_ for token in cached_doc if token.pos_ in ["NOUN", "PROPN"]}
+                cached_entities = {ent.label_ for ent in cached_doc.ents}
+
+                # Calculate structural similarity
+                verb_overlap = len(question_verbs & cached_verbs) / max(len(question_verbs | cached_verbs), 1)
+                noun_overlap = len(question_nouns & cached_nouns) / max(len(question_nouns | cached_nouns), 1)
+                entity_overlap = len(question_entities & cached_entities) / max(len(question_entities | cached_entities), 1)
+
+                # Weighted signature score
+                signature_score = (verb_overlap * 0.4 + noun_overlap * 0.3 + entity_overlap * 0.3)
+
+                # Combine with vector similarity
+                combined_score = (candidate.score * 0.6) + (signature_score * 0.4)
+
+                if combined_score > best_score:
+                    best_score = combined_score
+                    best_match = candidate
+                    # Update the score for confidence calculation
+                    best_match.score = combined_score
+
+            # Only return if signature similarity is strong enough
+            if best_score > 0.7:
+                return best_match
+
+        except Exception as e:
+            logging.debug(f"Error in signature matching: {e}")
+            return candidates[0] if candidates else None
+
+        return None
+
     def _check_recent_results_cache(self, question: str) -> Optional[CacheHit]:
         """
         Controlla la cache in memoria degli ultimi 3 risultati.
@@ -747,9 +807,10 @@ class SemanticCache:
         0. Recent results cache (ultimi 3, in memoria)
         1. Template matching
         2. Exact cache hit (Qdrant)
-        3. Semantic similarity (Qdrant)
-        4. Fuzzy matching (NUOVO)
-        5. No match -> LLM fallback
+        3. Semantic signature (structural NLP similarity)
+        4. Semantic similarity (Qdrant)
+        5. Fuzzy matching (string similarity)
+        6. No match -> LLM fallback
         """
         if not question or not question.strip():
             return CacheHit("", None, 0.0, "invalid_input")
@@ -815,25 +876,56 @@ class SemanticCache:
             )
             
             return cache_hit
-        
-        # Strategy 3: Semantic similarity (soglia più bassa)
+
+        # Strategy 3: Semantic signature (structural similarity with NLP)
+        signature_threshold = (exact_threshold + similarity_threshold) / 2  # Between exact and similar
+        signature_matches = self.qdrant_client.query_points(
+            collection_name=self.collection_name,
+            query=question_embedding,
+            limit=5,
+            score_threshold=signature_threshold,
+        ).points
+
+        if signature_matches:
+            # Use NLP to find best structural match
+            best_match = self._find_best_signature_match(question, signature_matches)
+
+            if best_match:
+                cache_hit = CacheHit(
+                    cypher_query=best_match.payload["cypher_query"],
+                    response=best_match.payload.get("response"),
+                    confidence=best_match.score * 0.95,  # Slightly penalize
+                    strategy="semantic_signature"
+                )
+
+                # Store in recent cache
+                self._store_in_recent_cache(
+                    question,
+                    best_match.payload["cypher_query"],
+                    best_match.payload.get("response"),
+                    best_match.payload.get("template_used")
+                )
+
+                return cache_hit
+
+        # Strategy 4: Semantic similarity (soglia più bassa)
         similar_matches = self.qdrant_client.query_points(
             collection_name=self.collection_name,
             query=question_embedding,
             limit=3,
             score_threshold=similarity_threshold,
         ).points
-        
+
         if similar_matches:
             best_match = similar_matches[0]
-            
+
             cache_hit = CacheHit(
                 cypher_query=best_match.payload["cypher_query"],
                 response=best_match.payload.get("response"),
                 confidence=best_match.score * 0.9,  # Penalizza lievemente
                 strategy="semantic_similarity"
             )
-            
+
             # Store in recent cache
             self._store_in_recent_cache(
                 question,
@@ -841,10 +933,10 @@ class SemanticCache:
                 best_match.payload.get("response"),
                 best_match.payload.get("template_used")
             )
-            
+
             return cache_hit
-        
-        # ===== Strategy 4: Fuzzy matching (NUOVO) =====
+
+        # ===== Strategy 5: Fuzzy matching =====
         fuzzy_hit = self._fuzzy_search(question, threshold=fuzzy_threshold)
         if fuzzy_hit:
             # Store in recent cache

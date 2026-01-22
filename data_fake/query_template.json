@@ -3,7 +3,7 @@
     "intent": "get_top_users_by_project",
     "template": "get top {count} users from project {project}",
     "parameters": ["count", "project"],
-    "cypher_template": "MATCH (p:Person)-[:WORKS_ON]->(proj:Project {name: '{project}'}) RETURN u LIMIT {count}",
+    "cypher_template": "MATCH (p:Person)-[:WORKS_ON]->(proj:Project {name: '{project}'}) RETURN p LIMIT {count}",
     "priority": 1,
     "aliases": ["show first {count} users in project {project}", "list top {count} people from {project}"],
     "parameter_patterns": {
@@ -15,22 +15,22 @@
     "intent": "list_projects_by_user",
     "template": "list projects for user {user}",
     "parameters": ["user"],
-    "cypher_template": "MATCH (p:Person {name: '{user}'})-[:WORKS_ON]->(proj:Project) RETURN proj",
+    "cypher_template": "MATCH (p:Person {name: '{user}'})-[:WORKS_ON]->(proj:Project) RETURN proj.title AS ProjectTitle",
     "priority": 1,
-    "aliases": ["show projects of {user}", "what projects does {user} work on"],
+    "aliases": ["show projects of {user}", "what projects does {user} work on", "what projects is {user} working on"],
     "parameter_patterns": {
-      "user": "(?:for|of|does)\\s+([A-Za-z]+(?:\\s+[A-Za-z]+)?)"
+      "user": "(?:for|of|does|is)\\s+([A-Za-z]+(?:\\s+[A-Za-z]+)?)(?:\\s+work(?:ing|s)?\\s+on)?"
     }
   },
   {
     "intent": "list_user_by_company",
     "template": "list all people who work for company {company}",
     "parameters": ["company"],
-    "cypher_template": "MATCH (p:Person)-[:WORKS_FOR]->(c:Company {name: '{company}'}) RETURN p",
+    "cypher_template": "MATCH (p:Person)-[:WORKS_FOR]->(c:Company {name: '{company}'}) RETURN p.name AS PersonName",
     "priority": 2,
     "aliases": ["who works at {company}", "all staff from {company}", "find people in {company}", "employees of {company}"],
     "parameter_patterns": {
-      "company": "(?:company|for)\\s+([A-Za-z]+(?:\\s+[A-Za-z]+)?)"
+      "company": "(?:company|for|at|in|of)\\s+([A-Za-z][A-Za-z0-9\\s\\-;,&\\.]+?)(?=\\s*\\?*$)"
     }
   },
   {
@@ -47,7 +47,7 @@
       "info on {user}'s projects and company"
     ],
     "parameter_patterns": {
-      "user": "(?:find\\s+projects\\s+|find\\s+)?([A-Za-z]+(?:\\s+[A-Za-z]+)?)\\s+works"
+      "user": "(?:is\\s+|does\\s+)?([A-Za-z]+(?:\\s+[A-Za-z]+)?)(?:\\s+work(?:ing|s)?)"
     }
   }
 ]
