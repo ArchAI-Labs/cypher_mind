@@ -412,6 +412,8 @@ def main():
             if table_data:
                 try:
                     df = pd.DataFrame(table_data)
+                    # Replace any remaining None values with empty strings
+                    df = df.fillna("")
                     if df.shape[0] > 100:
                         st.dataframe(df.head(100))
                         st.write(f"Showing first 100 of {df.shape[0]} rows.")

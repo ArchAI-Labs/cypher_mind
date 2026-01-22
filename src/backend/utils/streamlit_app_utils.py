@@ -28,7 +28,7 @@ def format_results_as_table(results):
 
     table_data = []
     for row_dict in processed_rows:
-        complete_row = {key: row_dict.get(key) for key in sorted(list(all_keys))}
+        complete_row = {key: row_dict.get(key, "") for key in sorted(list(all_keys))}
         table_data.append(complete_row)
 
     return table_data
