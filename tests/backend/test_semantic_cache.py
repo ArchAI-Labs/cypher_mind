@@ -11,8 +11,6 @@ import sys
 # Add src to path to import modules
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'src'))
 
-# Importa le classi dal modulo originale
-# Assicurarsi che semantic_cache.py sia importabile
 from backend.semantic_cache import (
     SemanticCache,
     QueryTemplate,
@@ -38,7 +36,6 @@ def mock_env(monkeypatch):
 @pytest.fixture
 def mock_qdrant_client():
     with patch("backend.semantic_cache.QdrantClient") as mock_client:
-        # Configura il mock per ritornare istanze simulate
         instance = mock_client.return_value
         instance.collection_exists.return_value = False
         instance.get_collection.return_value.points_count = 0
@@ -53,15 +50,12 @@ def mock_async_qdrant_client():
 def mock_embedder():
     with patch("backend.semantic_cache.TextEmbedding") as mock_emb:
         instance = mock_emb.return_value
-        # Mock embed restituisce un generatore di liste (vettori)
-        # Simuliamo un vettore di dimensione 3 con valori float
         instance.embed.return_value = [[0.1, 0.2, 0.3]]
         yield instance
 
 @pytest.fixture
 def semantic_cache(mock_env, mock_qdrant_client, mock_embedder):
     """Inizializza la cache con dipendenze mockate."""
-    # Mock os.path.exists o open per il caricamento template
     with patch("builtins.open", mock_open(read_data='[]')):
         cache = SemanticCache(
             collection_name="test_collection",
@@ -76,7 +70,6 @@ def semantic_cache(mock_env, mock_qdrant_client, mock_embedder):
 class TestParameterExtractor:
     def test_regex_extraction(self):
         extractor = AdvancedParameterExtractor()
-        # Forza l'uso solo regex disabilitando nlp
         extractor.use_nlp = False
 
         text = "Show top 10 projects"
@@ -118,9 +111,7 @@ class TestSemanticCacheInit:
         with patch("builtins.open", mock_open(read_data='[{"intent": "t1", "template": "abc", "parameters": [], "cypher_template": "MATCH"}]')):
             cache = SemanticCache("test_col", "memory", "model", 384)
 
-            # Verifica creazione collection
             mock_qdrant_client.create_collection.assert_called()
-            # Verifica sync template
             mock_qdrant_client.upsert.assert_called()
             assert len(cache.query_templates) == 1
 
@@ -135,15 +126,13 @@ class TestUtilities:
     def test_get_embedding_caching(self, semantic_cache):
         text = "hello world"
 
-        # Prima chiamata: deve chiamare il modello
         emb1 = semantic_cache.get_embedding(text)
         assert semantic_cache.cache_misses == 1
         assert semantic_cache.model.embed.call_count == 1
 
-        # Seconda chiamata: deve usare la cache
         emb2 = semantic_cache.get_embedding(text)
         assert semantic_cache.cache_hits == 1
-        assert semantic_cache.model.embed.call_count == 1 # Non deve incrementare
+        assert semantic_cache.model.embed.call_count == 1
         assert emb1 == emb2
 
     def test_cypher_generation(self, semantic_cache):
@@ -164,12 +153,10 @@ class TestUtilities:
             parameters=["name"],
             cypher_template="MATCH (n) WHERE n.name = '{name}'"
         )
-        # Tentativo di injection o caratteri strani
         params = {"name": "Alice'; DROP TABLE--"}
         query = semantic_cache.generate_cypher_from_template(template, params)
-        # La sanitizzazione dovrebbe rimuovere i caratteri speciali non permessi dalla regex \w\s-
-        assert "DROP" in query # La parola DROP passa la regex \w
-        assert ";" not in query # Il punto e virgola dovrebbe essere rimosso
+        assert "DROP" in query
+        assert ";" not in query
         # Note: single quotes in the template are preserved, only checking that injection chars are removed
         assert query.count("'") == 2  # Only the template quotes should remain
 
@@ -182,23 +169,19 @@ class TestSmartSearch:
         question = "Who is CEO?"
         cypher = "MATCH (c:CEO) RETURN c"
 
-        # Popola manualmente la cache recente
         semantic_cache._store_in_recent_cache(question, cypher, "Elon", "template_ceo")
 
-        # Cerca
         hit = semantic_cache.smart_search(question)
 
         assert hit.strategy == "recent_cache"
         assert hit.cypher_query == cypher
         assert semantic_cache.recent_cache_hits == 1
-        # Qdrant non dovrebbe essere chiamato per la ricerca
         semantic_cache.qdrant_client.query_points.assert_not_called()
 
     def test_strategy_1_template_match(self, semantic_cache):
         """Testa il match tramite template"""
         question = "List top 5 users"
 
-        # Mocking del risultato di ricerca vettoriale per i template
         mock_template_point = MockScoredPoint(
             id="t1", version=1, score=0.95, vector=None,
             payload={
@@ -211,10 +194,8 @@ class TestSmartSearch:
             }
         )
 
-        # Configura il client per restituire questo punto quando si cerca nella collection template
         semantic_cache.qdrant_client.query_points.return_value.points = [mock_template_point]
 
-        # Mock della response cached per la query generata
         semantic_cache.qdrant_client.scroll.return_value = ([
             MockPoint(id="r1", score=1, vector=None, payload={"response": "User list..."})
         ], None)
@@ -228,11 +209,6 @@ class TestSmartSearch:
     def test_strategy_2_exact_match(self, semantic_cache):
         """Testa il match esatto vettoriale"""
         question = "unique question"
-
-        # Simula nessun template match
-        # Nota: dobbiamo mockare due chiamate a query_points:
-        # 1. Per i template (ritorna vuoto)
-        # 2. Per la collection principale (ritorna match alto)
 
         def query_side_effect(collection_name, **kwargs):
             if collection_name.endswith("_templates"):
@@ -268,7 +244,7 @@ class TestSmartSearch:
             MockPoint(
                 id="old1", score=1, vector=None,
                 payload={
-                    "question": "give me user list", # Molto simile a "gimme"
+                    "question": "give me user list",
                     "cypher_query": "MATCH users",
                     "response": "Fuzzy Res",
                     "template_used": None
@@ -276,14 +252,9 @@ class TestSmartSearch:
             )
         ], None)
 
-        # Assumiamo che rapidfuzz sia installato o mockiamo la variabile globale nel modulo se necessario
-        # Qui ci affidiamo al fatto che il codice usa rapidfuzz se disponibile.
-        # Se rapidfuzz non c'è, questo test fallirà o tornerà no_match (dipende dall'ambiente)
-
         with patch("backend.semantic_cache.FUZZY_AVAILABLE", True):
-            hit = semantic_cache.smart_search(question, fuzzy_threshold=50) # Soglia bassa per test
+            hit = semantic_cache.smart_search(question, fuzzy_threshold=50)
 
-            # Se la fuzzy trova il match
             if hit.strategy != "no_match":
                 assert hit.strategy == "fuzzy_match"
                 assert hit.cypher_query == "MATCH users"
@@ -305,13 +276,12 @@ class TestStorage:
         )
         assert success is True
         semantic_cache.qdrant_client.upsert.assert_called_once()
-        # Verifica anche l'aggiornamento della cache recente
         assert "Q1" in [v['question'] for v in semantic_cache.recent_results_cache.values()]
 
     def test_store_batch_queries(self, semantic_cache):
         queries = [
             {"question": "Q1", "cypher_query": "C1", "response": "R1"},
-            {"question": "Q2", "cypher_query": "C2"} # Senza response
+            {"question": "Q2", "cypher_query": "C2"}
         ]
         success = semantic_cache.store_batch_queries(queries)
         assert success is True
@@ -328,7 +298,6 @@ class TestAsyncMethods:
         pytest.skip("Async test requires full async client setup")
 
     async def test_async_batch_search(self, semantic_cache):
-        # Mockiamo async_smart_search per isolare il test del batch
         with patch.object(semantic_cache, 'async_smart_search') as mock_single_search:
             mock_single_search.side_effect = [
                 CacheHit("C1", "R1", 1.0, "mock"),
@@ -344,7 +313,6 @@ class TestAsyncMethods:
 # --- Tests: Stats & Cleanup ---
 
 def test_performance_stats(semantic_cache):
-    # Simula alcuni dati
     semantic_cache.cache_hits = 10
     semantic_cache.cache_misses = 5
 
@@ -367,6 +335,3 @@ def test_clear_caches(semantic_cache):
     assert len(semantic_cache.embedding_cache) == 0
     assert len(semantic_cache.recent_results_cache) == 0
     assert semantic_cache.cache_hits == 0
-
-# if __name__ == "__main__":
-#     pytest.main(["-v", __file__])

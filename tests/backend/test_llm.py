@@ -5,16 +5,11 @@ import pytest
 import importlib
 from unittest.mock import MagicMock, patch
 
-# --- Setup del Path ---
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'src')))
 
-# --- CLEANUP CRITICO ---
-# Rimuoviamo eventuali mock di backend.llm lasciati da altri test (es. test_gds_manager)
-# Questo forza Python a ricaricare il modulo reale.
 if 'backend.llm' in sys.modules:
     del sys.modules['backend.llm']
 
-# Importiamo il modulo reale
 import backend.llm as llm
 
 # --- Fixtures ---
@@ -31,7 +26,6 @@ def mock_env(monkeypatch):
 @pytest.fixture
 def mock_completion():
     """Mock per litellm.completion."""
-    # Patchiamo litellm.completion DOVE viene usato, cioè dentro backend.llm
     with patch("backend.llm.completion") as mock:
         mock_response = MagicMock()
         mock_message = MagicMock()

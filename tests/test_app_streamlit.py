@@ -94,14 +94,11 @@ def setup_modules(mock_cache_hit_class):
     # Default button behavior: False by default to prevent triggering all actions
     mock_st.button.return_value = False
 
-    # Gestione columns
     mock_st.columns.side_effect = lambda x: [MagicMock() for _ in range(x)] if isinstance(x, int) else [MagicMock(), MagicMock()]
     
-    # Gestione context managers
     mock_st.spinner.return_value.__enter__.return_value = None
     mock_st.sidebar.expander.return_value.__enter__.return_value = None
 
-    # PATCH CRITICA
     with patch.dict(sys.modules, {
         'streamlit': mock_st,
         'backend.llm': mock_llm,
@@ -236,7 +233,7 @@ def test_run_button_cypher_hit_exec_success(setup_modules, mock_env, mock_cache_
         
         mock_ask.assert_called_with(
             question="Question", 
-            data_schema=ANY,  # Correct usage of ANY
+            data_schema=ANY,
             override_cypher="MATCH (n) RETURN n"
         )
         mock_cache_instance.store_query_and_response.assert_called()
