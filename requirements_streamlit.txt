@@ -2,13 +2,11 @@ neo4j==5.28.1
 python-dotenv==1.1.0
 streamlit==1.44.0
 qdrant-client==1.13.3
-fastembed==0.6.0
 litellm==1.70.4
-spacy>=3.7
-rapidfuzz>=3.0.0
+medha[fastembed,fuzzy,nlp] @ git+https://github.com/ArchAI-Labs/medha.git
 pip>=25.2
 setuptools==80.9.0
-wheel==0.46.2
+wheel>=0.46.2
 pytest>=7.0.0
 pytest-mock>=3.10.0
 pytest-asyncio>=0.21.0

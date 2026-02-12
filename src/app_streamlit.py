@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+import asyncio
 
 import streamlit as st
 import pandas as pd
@@ -15,7 +16,8 @@ from backend.utils.streamlit_app_utils import (
     format_results_as_table,
     generate_sample_questions,
 )
-from backend.semantic_cache import SemanticCache, create_optimized_cache, CacheHit
+from medha import Medha, CacheHit, Settings, SearchStrategy
+from medha.embeddings.fastembed_adapter import FastEmbedAdapter
 
 
 LOGO_PATH = "img/logo_cyphermind.png"
@@ -67,9 +69,8 @@ st.markdown(
         .template-badge {{ background-color: #28a745; }}
         .exact-badge {{ background-color: #17a2b8; }}
         .similar-badge {{ background-color: #ffc107; color: black; }}
-        .signature-badge {{ background-color: #6f42c1; }}
         .fuzzy-badge {{ background-color: #fd7e14; }}
-        .recent-badge {{ background-color: #20c997; }}
+        .l1-badge {{ background-color: #20c997; }}
         .llm-badge {{ background-color: #dc3545; }}
         .performance-metric {{
             background-color: #f8f9fa;
@@ -86,64 +87,67 @@ st.markdown(
 def get_strategy_badge(strategy):
     """Return HTML badge for the strategy used"""
     badges = {
-        "template_match": '<span class="strategy-badge template-badge">TEMPLATE</span>',
-        "exact_match": '<span class="strategy-badge exact-badge">EXACT MATCH</span>',
-        "semantic_similarity": '<span class="strategy-badge similar-badge">SIMILAR</span>',
-        "semantic_signature": '<span class="strategy-badge signature-badge">SIGNATURE</span>',
-        "fuzzy_match": '<span class="strategy-badge fuzzy-badge">FUZZY MATCH</span>',  # NUOVO
-        "recent_cache": '<span class="strategy-badge recent-badge">RECENT</span>',  # NUOVO
-        "llm": '<span class="strategy-badge llm-badge">LLM GENERATED</span>'
+        SearchStrategy.TEMPLATE_MATCH: '<span class="strategy-badge template-badge">TEMPLATE</span>',
+        SearchStrategy.EXACT_MATCH: '<span class="strategy-badge exact-badge">EXACT MATCH</span>',
+        SearchStrategy.SEMANTIC_MATCH: '<span class="strategy-badge similar-badge">SIMILAR</span>',
+        SearchStrategy.FUZZY_MATCH: '<span class="strategy-badge fuzzy-badge">FUZZY MATCH</span>',
+        SearchStrategy.L1_CACHE: '<span class="strategy-badge l1-badge">L1 CACHE</span>',
     }
-    return badges.get(strategy, f'<span class="strategy-badge">{strategy.upper()}</span>')
+    # Also support string "llm" set by the app itself
+    if strategy == "llm":
+        return '<span class="strategy-badge llm-badge">LLM GENERATED</span>'
+    return badges.get(strategy, f'<span class="strategy-badge">{strategy}</span>')
 
 def display_cache_result_info(cache_hit):
-    """Display information about cache search results using new CacheHit object"""
-    if cache_hit.strategy == "recent_cache":
+    """Display information about cache search results"""
+    strategy = cache_hit.strategy
+
+    if strategy == SearchStrategy.L1_CACHE:
         st.markdown(
             f'<div class="cache-info">'
-            f'{get_strategy_badge("recent_cache")}'
-            f'<strong>Found in recent cache!</strong> Retrieved from last 3 queries (in-memory).'
+            f'{get_strategy_badge(SearchStrategy.L1_CACHE)}'
+            f'<strong>Found in L1 memory cache!</strong> Retrieved from recent queries (in-memory).'
             f'<br><small>Confidence: {cache_hit.confidence:.2%}</small>'
             f'</div>',
             unsafe_allow_html=True
         )
-    elif cache_hit.strategy == "template_match":
+    elif strategy == SearchStrategy.TEMPLATE_MATCH:
         st.markdown(
             f'<div class="cache-info">'
-            f'{get_strategy_badge("template_match")}'
-            f'<strong>Query template matched!</strong> Generated Cypher directly from pattern without LLM call.'
+            f'{get_strategy_badge(SearchStrategy.TEMPLATE_MATCH)}'
+            f'<strong>Query template matched!</strong> Generated query directly from pattern without LLM call.'
             f'<br><small>Confidence: {cache_hit.confidence:.2%} | Template: {cache_hit.template_used or "Unknown"}</small>'
             f'</div>',
             unsafe_allow_html=True
         )
-    elif cache_hit.strategy == "exact_match":
+    elif strategy == SearchStrategy.EXACT_MATCH:
         st.markdown(
             f'<div class="cache-info">'
-            f'{get_strategy_badge("exact_match")}'
+            f'{get_strategy_badge(SearchStrategy.EXACT_MATCH)}'
             f'<strong>Exact match found in cache!</strong> Retrieved previously processed query.'
             f'<br><small>Confidence: {cache_hit.confidence:.2%}</small>'
             f'</div>',
             unsafe_allow_html=True
         )
-    elif cache_hit.strategy in ["semantic_similarity", "semantic_signature"]:
+    elif strategy == SearchStrategy.SEMANTIC_MATCH:
         st.markdown(
             f'<div class="cache-info">'
-            f'{get_strategy_badge(cache_hit.strategy)}'
-            f'<strong>Similar query found!</strong> Using cached result with {cache_hit.strategy.replace("_", " ")}.'
+            f'{get_strategy_badge(SearchStrategy.SEMANTIC_MATCH)}'
+            f'<strong>Similar query found!</strong> Using cached result with semantic similarity.'
             f'<br><small>Confidence: {cache_hit.confidence:.2%}</small>'
             f'</div>',
             unsafe_allow_html=True
         )
-    elif cache_hit.strategy == "fuzzy_match":
+    elif strategy == SearchStrategy.FUZZY_MATCH:
         st.markdown(
             f'<div class="cache-info">'
-            f'{get_strategy_badge("fuzzy_match")}'
+            f'{get_strategy_badge(SearchStrategy.FUZZY_MATCH)}'
             f'<strong>Fuzzy match found!</strong> Using string similarity to find similar query.'
             f'<br><small>Confidence: {cache_hit.confidence:.2%}</small>'
             f'</div>',
             unsafe_allow_html=True
         )
-    elif cache_hit.strategy == "llm":
+    elif strategy == "llm":
         st.markdown(
             f'<div class="cache-info">'
             f'{get_strategy_badge("llm")}'
@@ -152,38 +156,47 @@ def display_cache_result_info(cache_hit):
             f'</div>',
             unsafe_allow_html=True
         )
-    elif cache_hit.strategy == "no_match":
+    elif strategy == SearchStrategy.NO_MATCH:
         st.info("No suitable cache match found. Will use LLM to generate new query.")
 
 
 def initialize_cache():
-    """Initialize the enhanced semantic cache with better error handling"""
+    """Initialize the Medha semantic cache"""
     try:
-        # Prima prova la funzione factory ottimizzata
-        cache = create_optimized_cache(
-            collection_name=os.environ.get("QDRANT_COLLECTION", "semantic_cache"),
-            mode=os.environ.get("QDRANT_MODE", "memory"),
-            embedder=os.environ.get("EMBEDDER", "sentence-transformers/all-MiniLM-L6-v2"),
-            vector_size=int(os.environ.get("VECTOR_SIZE", "384"))
+        embedder = FastEmbedAdapter(
+            model_name=os.environ.get("EMBEDDER", "sentence-transformers/all-MiniLM-L6-v2")
         )
+        settings = Settings(
+            qdrant_mode=os.environ.get("QDRANT_MODE", "memory"),
+            qdrant_host=os.environ.get("QDRANT_HOST", "localhost"),
+            qdrant_url=os.environ.get("QDRANT_URL"),
+            qdrant_api_key=os.environ.get("QDRANT_API_KEY"),
+            template_file=os.environ.get("TEMPLATE_QUERY"),
+            score_threshold_exact=float(os.environ.get("EXACT_THRESHOLD", "0.99")),
+            score_threshold_semantic=float(os.environ.get("SIMILARITY_THRESHOLD", "0.90")),
+            score_threshold_template=float(os.environ.get("TEMPLATE_THRESHOLD", "0.70")),
+            score_threshold_fuzzy=float(os.environ.get("FUZZY_THRESHOLD", "85.0")),
+        )
+        cache = Medha(
+            collection_name=os.environ.get("QDRANT_COLLECTION", "semantic_cache"),
+            embedder=embedder,
+            settings=settings,
+        )
+        asyncio.run(cache.start())
         return cache
     except Exception as e:
-        st.error(f"Error with optimized cache initialization: {e}")
-        logging.error(f"Optimized cache initialization error: {e}")
-        
-        # Fallback alla inizializzazione diretta
-        try:
-            cache = SemanticCache(
-                collection_name=os.environ.get("QDRANT_COLLECTION", "semantic_cache"),
-                mode=os.environ.get("QDRANT_MODE", "memory"),
-                embedder=os.environ.get("EMBEDDER", "sentence-transformers/all-MiniLM-L6-v2"),
-                vector_size=int(os.environ.get("VECTOR_SIZE", "384"))
-            )
-            return cache
-        except Exception as e2:
-            st.error(f"Error with direct cache initialization: {e2}")
-            logging.error(f"Direct cache initialization error: {e2}")
-            return None
+        st.error(f"Error initializing cache: {e}")
+        logging.error(f"Cache initialization error: {e}")
+        return None
+
+
+def _update_cache_thresholds(cache):
+    """Update cache settings from sidebar slider values"""
+    cache._settings.score_threshold_template = st.session_state.get('template_threshold', 0.70)
+    cache._settings.score_threshold_exact = st.session_state.get('exact_threshold', 0.99)
+    cache._settings.score_threshold_fuzzy = st.session_state.get('fuzzy_threshold', 85.0)
+    cache._settings.score_threshold_semantic = st.session_state.get('similarity_threshold', 0.90)
+
 
 def main():
     st.image(LOGO_PATH, width=200)
@@ -192,11 +205,9 @@ def main():
 
     # Display optimization info banner
     st.info(
-        "⚡ **Powered by Optimized Qdrant Vector Search** | "
-        "🚀 Quantization enabled (~75% memory reduction) | "
-        "📊 HNSW indexing | "
-        "⚙️ Batch operations | "
-        "🔄 Async concurrent search"
+        "**Powered by Medha Semantic Cache** | "
+        "5-tier waterfall search | "
+        "L1 Memory + Templates + Vector + Semantic + Fuzzy"
     )
 
     # Initialize Semantic Cache
@@ -217,36 +228,28 @@ def main():
     # Quick stats dashboard
     if st.session_state.qdrant_cache:
         try:
-            perf_stats = st.session_state.qdrant_cache.get_performance_stats()
-            col_stat1, col_stat2, col_stat3, col_stat4 = st.columns(4)
+            cache_stats = st.session_state.qdrant_cache.stats
+            col_stat1, col_stat2, col_stat3 = st.columns(3)
 
             with col_stat1:
                 st.metric(
                     "Cache Hit Rate",
-                    f"{perf_stats['cache_performance']['hit_rate_percentage']:.1f}%",
-                    help="Percentage of embedding cache hits"
+                    f"{cache_stats.get('hit_rate', 0):.1f}%",
+                    help="Percentage of cache hits"
                 )
 
             with col_stat2:
                 st.metric(
-                    "Cached Queries",
-                    perf_stats['storage']['total_cached_queries'],
-                    help="Total queries stored in Qdrant"
+                    "Total Requests",
+                    cache_stats.get('total_requests', 0),
+                    help="Total search requests"
                 )
 
             with col_stat3:
-                quantization_type = perf_stats['qdrant_metrics']['config'].get('quantization_type', 'None')
                 st.metric(
-                    "Quantization",
-                    quantization_type if quantization_type else "Disabled",
-                    help="Vector quantization type for memory optimization"
-                )
-
-            with col_stat4:
-                st.metric(
-                    "Templates",
-                    perf_stats['storage']['templates_in_qdrant'],
-                    help="Query templates in Qdrant"
+                    "Cached Queries",
+                    cache_stats.get('total_cached_queries', 0),
+                    help="Total queries stored in cache"
                 )
 
         except Exception as e:
@@ -259,7 +262,7 @@ def main():
 
         if "llm_result" not in st.session_state:
             st.session_state.llm_result = None
-        
+
         if "last_cache_hit" not in st.session_state:
             st.session_state.last_cache_hit = None
 
@@ -290,77 +293,64 @@ def main():
         if st.button("Run"):
             if question and st.session_state.qdrant_cache:
                 with st.spinner("Searching cache and processing query..."):
-                    # Recupera i valori dei threshold dalla sessione
-                    template_threshold = st.session_state.get('template_threshold', 0.8)
-                    exact_threshold = st.session_state.get('exact_threshold', 0.95)
-                    similarity_threshold = st.session_state.get('similarity_threshold', 0.8)
-                    fuzzy_threshold = st.session_state.get('fuzzy_threshold', 85.0)  # AGGIUNTO
+                    # Update thresholds from sidebar sliders
+                    _update_cache_thresholds(st.session_state.qdrant_cache)
 
-                    # Usa l'enhanced smart search con i threshold dell'interfaccia utente
-                    cache_hit = st.session_state.qdrant_cache.smart_search(
-                        question,
-                        template_threshold=template_threshold,
-                        exact_threshold=exact_threshold,
-                        similarity_threshold=similarity_threshold,
-                        fuzzy_threshold=fuzzy_threshold
-                    )
+                    # Search using medha
+                    cache_hit = st.session_state.qdrant_cache.search_sync(question)
                     st.session_state.last_cache_hit = cache_hit
-                    cypher_query = cache_hit.cypher_query
-                    result = None # Inizializza result a None
+                    generated_query = cache_hit.generated_query
+                    result = None
 
-                    # Caso 1: Trovato un risultato completo in cache
-                    if cache_hit.response:
+                    # Case 1: Full response found in cache
+                    if cache_hit.response_summary:
                         st.session_state.llm_result = {
-                            "data": cache_hit.response,
-                            "cypher_query": cypher_query,
+                            "data": cache_hit.response_summary,
+                            "cypher_query": generated_query,
                             "cached": True,
                             "strategy": cache_hit.strategy,
                             "confidence": cache_hit.confidence
                         }
-                        st.success("🎉 Response found in cache!")
+                        st.success("Response found in cache!")
                     else:
-                        # Caso 2: Trovata una query Cypher, ma non la response o la response era vuota
-                        # Questa parte viene eseguita solo se non c'è una response completa in cache
-                        if cypher_query and cache_hit.confidence > 0.0:
+                        # Case 2: Cypher query found but no response
+                        if generated_query and cache_hit.confidence > 0.0:
                             st.info(f"Running Cypher queries from cache ({cache_hit.strategy})...")
                             try:
-                                # Prova ad eseguire la query Cypher
                                 current_result = ask_neo4j_llm(
                                     question=question,
                                     data_schema=graph_schema,
-                                    override_cypher=cypher_query
+                                    override_cypher=generated_query
                                 )
 
                                 if current_result and current_result.get("data"):
-                                    # Verifica se i risultati sono vuoti
                                     if isinstance(current_result["data"], list) and not current_result["data"]:
                                         st.warning("Cypher query executed but no results found. Fallback to LLM...")
-                                        result = None  # Resetta il risultato per attivare il fallback
+                                        result = None
                                     else:
-                                        # Abbiamo risultati non vuoti, memorizzali in cache e usali
-                                        st.session_state.qdrant_cache.store_query_and_response(
+                                        st.session_state.qdrant_cache.store_sync(
                                             question=question,
-                                            cypher_query=cypher_query,
-                                            response=current_result["data"],
-                                            template_used=cache_hit.template_used
+                                            generated_query=generated_query,
+                                            response_summary=current_result["data"],
+                                            template_id=cache_hit.template_used
                                         )
                                         st.session_state.llm_result = {
                                             **current_result,
-                                            "cached": True, # È un hit della cache semantica (query Cypher)
+                                            "cached": True,
                                             "strategy": cache_hit.strategy,
                                             "confidence": cache_hit.confidence
                                         }
-                                        st.success("✅ Query successfully executed from the database!")
-                                        result = current_result # Imposta result per evitare il fallback LLM
+                                        st.success("Query successfully executed from the database!")
+                                        result = current_result
                                 else:
                                     st.warning("No results from the Cypher query. Fallback to LLM...")
-                                    result = None # Attiva il fallback LLM
+                                    result = None
                             except Exception as e:
                                 st.error(f"Error executing Cypher query: {e}. Fallback to LLM...")
-                                result = None # Attiva il fallback LLM
+                                result = None
 
-                        # Caso 3: Nessun match della cache (cypher_query vuota) o fallback da strategia precedente (result è None), usa l'LLM
-                        if not result: # Se 'result' è ancora None, significa che dobbiamo usare l'LLM
+                        # Case 3: No cache match or fallback, use LLM
+                        if not result:
                             st.info("Generating a new query with LLM...")
                             try:
                                 result = ask_neo4j_llm(
@@ -368,11 +358,10 @@ def main():
                                     data_schema=graph_schema
                                 )
                                 if result and result.get("data"):
-                                    # Memorizza la nuova query e risposta in cache
-                                    st.session_state.qdrant_cache.store_query_and_response(
+                                    st.session_state.qdrant_cache.store_sync(
                                         question=question,
-                                        cypher_query=result["cypher_query"],
-                                        response=result["data"]
+                                        generated_query=result["cypher_query"],
+                                        response_summary=result["data"]
                                     )
                                     st.session_state.llm_result = {
                                         **result,
@@ -380,15 +369,14 @@ def main():
                                         "strategy": "llm",
                                         "confidence": 1.0
                                     }
-                                    # Update last_cache_hit to reflect that LLM was actually used
                                     st.session_state.last_cache_hit = CacheHit(
-                                        cypher_query=result["cypher_query"],
-                                        response=result["data"],
+                                        generated_query=result["cypher_query"],
+                                        response_summary=result["data"],
                                         confidence=1.0,
                                         strategy="llm",
                                         template_used=None
                                     )
-                                    st.success("🚀 Query generated and cached!")
+                                    st.success("Query generated and cached!")
                                 else:
                                     st.warning("No results from the LLM.")
                                     st.session_state.llm_result = None
@@ -429,12 +417,11 @@ def main():
         with st.sidebar.expander("Cache Settings", expanded=True):
             st.subheader("Smart Cache Configuration")
 
-            # Inizializza e aggiorna i threshold tramite session_state
             st.session_state.template_threshold = st.slider(
                 "Template Match Threshold",
                 min_value=0.5,
                 max_value=1.0,
-                value=st.session_state.get('template_threshold', 0.75),
+                value=st.session_state.get('template_threshold', 0.70),
                 step=0.05,
                 format="%.2f",
                 key='template_threshold_slider',
@@ -445,7 +432,7 @@ def main():
                 "Exact Match Threshold",
                 min_value=0.9,
                 max_value=1.0,
-                value=st.session_state.get('exact_threshold', 0.95),
+                value=st.session_state.get('exact_threshold', 0.99),
                 step=0.01,
                 format="%.3f",
                 key='exact_threshold_slider',
@@ -467,40 +454,32 @@ def main():
                 "Similarity Search Threshold",
                 min_value=0.7,
                 max_value=0.95,
-                value=st.session_state.get('similarity_threshold', 0.8),
+                value=st.session_state.get('similarity_threshold', 0.90),
                 step=0.01,
                 format="%.3f",
                 key='similarity_threshold_slider',
-                help="Minimum similarity for fallback semantic search.",
+                help="Minimum similarity for semantic search.",
             )
-            
+
             st.info(
-                "🧠 **Cache Strategies:**\n\n"
-                "0. **Recent Cache** - Last 3 queries (in-memory)\n"
-                "1. **Template Matching** - Pattern-based Cypher generation\n"
-                "2. **Exact Match** - Previously cached identical queries\n"
-                "3. **Semantic Signature** - Structural NLP similarity\n"
-                "4. **Semantic Similarity** - Semantically related queries\n"
+                "**Cache Strategies (Waterfall):**\n\n"
+                "1. **L1 Memory** - Recent queries (in-memory LRU)\n"
+                "2. **Template Matching** - Pattern-based query generation\n"
+                "3. **Exact Match** - High-confidence vector match\n"
+                "4. **Semantic Similarity** - Meaning-based matching\n"
                 "5. **Fuzzy Matching** - String similarity (Levenshtein)\n"
                 "6. **LLM Fallback** - Generate new query when needed"
             )
 
         with st.sidebar.expander("Cache Management"):
             col_cache_a, col_cache_b = st.columns(2)
-            
+
             with col_cache_a:
                 if st.button("Reset Cache"):
                     try:
-                        # Delete collections
                         if st.session_state.qdrant_cache:
-                            st.session_state.qdrant_cache.qdrant_client.delete_collection(
-                                collection_name=st.session_state.qdrant_cache.collection_name
-                            )
-                            st.session_state.qdrant_cache.qdrant_client.delete_collection(
-                                collection_name=st.session_state.qdrant_cache.template_collection
-                            )
-                        
-                        # Reinitialize
+                            asyncio.run(st.session_state.qdrant_cache.close())
+
                         st.session_state.qdrant_cache = initialize_cache()
                         if st.session_state.qdrant_cache:
                             st.success("Cache reset successfully!")
@@ -508,7 +487,7 @@ def main():
                             st.error("Error reinitializing cache.")
                     except Exception as e:
                         st.error(f"Error resetting cache: {e}")
-            
+
             with col_cache_b:
                 if st.button("Clear Memory"):
                     if st.session_state.qdrant_cache:
@@ -517,7 +496,7 @@ def main():
                     else:
                         st.warning("No cache instance available.")
 
-            st.info("**Reset Cache:** Deletes all stored queries and templates\n"
+            st.info("**Reset Cache:** Closes and reinitializes the cache\n"
                    "**Clear Memory:** Clears in-memory caches only")
 
         with st.sidebar.expander("Performance Analytics"):
@@ -525,91 +504,24 @@ def main():
                 if st.session_state.qdrant_cache:
                     with st.spinner("Loading performance analytics..."):
                         try:
-                            perf_stats = st.session_state.qdrant_cache.get_performance_stats()
+                            cache_stats = st.session_state.qdrant_cache.stats
 
-                            if "error" in perf_stats:
-                                st.error(f"Error: {perf_stats['error']}")
-                            else:
-                                # Cache Performance
-                                st.subheader("🎯 Cache Performance")
-                                perf = perf_stats["cache_performance"]
+                            st.subheader("Cache Performance")
+                            col_perf_a, col_perf_b = st.columns(2)
+                            with col_perf_a:
+                                st.metric("Hit Rate", f"{cache_stats.get('hit_rate', 0):.1f}%")
+                                st.metric("Total Requests", cache_stats.get('total_requests', 0))
 
-                                col_perf_a, col_perf_b = st.columns(2)
-                                with col_perf_a:
-                                    st.metric("Hit Rate", f"{perf['hit_rate_percentage']:.1f}%")
-                                    st.metric("Template Hits", perf["template_hits"])
-                                    st.metric("Recent Cache Hits", perf["recent_cache_hits"])
+                            with col_perf_b:
+                                st.metric("Cached Queries", cache_stats.get('total_cached_queries', 0))
+                                st.metric("Templates", cache_stats.get('templates_count', 0))
 
-                                with col_perf_b:
-                                    st.metric("Embedding Hits", perf["embedding_cache_hits"])
-                                    st.metric("Embedding Misses", perf["embedding_cache_misses"])
-                                    st.metric("Fuzzy Hits", perf["fuzzy_hits"])
-
-                                st.metric("Total Search Hits", perf["total_search_hits"])
-
-                                # Storage Info
-                                st.subheader("💾 Storage")
-                                storage = perf_stats["storage"]
-
-                                col_stor_a, col_stor_b = st.columns(2)
-                                with col_stor_a:
-                                    st.metric("Cached Queries", storage["total_cached_queries"])
-                                    st.metric("Templates in Qdrant", storage["templates_in_qdrant"])
-                                    st.metric("Vector Size", storage["vector_size"])
-
-                                with col_stor_b:
-                                    st.metric("Embedding Cache", storage["embedding_cache_size"])
-                                    st.metric("Frequent Cache", storage["frequent_queries_cache_size"])
-                                    st.metric("Recent Cache", storage["recent_results_cache_size"])
-
-                                # Qdrant Metrics (NEW!)
-                                st.subheader("⚡ Qdrant Optimization Metrics")
-                                qdrant = perf_stats["qdrant_metrics"]
-
-                                col_q1, col_q2 = st.columns(2)
-                                with col_q1:
-                                    st.metric("Indexed Vectors", qdrant["indexed_vectors_count"])
-                                    st.metric("Total Vectors", qdrant["vectors_count"])
-                                    st.metric("Segments", qdrant["segments_count"])
-
-                                with col_q2:
-                                    st.text(f"Status: {qdrant['status']}")
-                                    st.text(f"Optimizer: {qdrant['optimizer_status']}")
-
-                                # HNSW Configuration
-                                st.markdown("**HNSW Configuration:**")
-                                config = qdrant["config"]
-                                st.text(f"  • M (edges): {config['hnsw_m']}")
-                                st.text(f"  • EF Construct: {config['hnsw_ef_construct']}")
-                                st.text(f"  • Distance: {config['distance']}")
-
-                                # Quantization Info
-                                st.markdown("**Quantization:**")
-                                if config["quantization_enabled"]:
-                                    st.success(f"✅ {config['quantization_type']} enabled")
-                                    st.info("Memory usage reduced by ~75% with scalar quantization")
-                                else:
-                                    st.warning("❌ Quantization disabled")
-
-                                st.text(f"On-Disk Storage: {'Yes' if config['on_disk'] else 'No'}")
-
-                                # Model Info
-                                st.subheader("🤖 Model Configuration")
-                                model_info = perf_stats["model_info"]
-                                efficiency = perf_stats["efficiency"]
-
-                                st.text(f"Embedder: {model_info['embedder_model']}")
-                                st.text(f"NLP Enabled: {'Yes' if model_info['nlp_enabled'] else 'No'}")
-                                st.text(f"Fuzzy Matching: {'Available' if model_info['fuzzy_matching_available'] else 'Not Available'}")
-                                st.text(f"Templates Loaded: {efficiency['templates_loaded']}")
-                                st.text(f"Avg Template Priority: {efficiency['avg_template_priority']:.1f}")
-
-                                # Memory Efficiency
-                                st.markdown("**Memory Efficiency:**")
-                                mem_eff = efficiency["memory_efficiency"]
-                                st.text(f"  • Max Embedding Cache: {mem_eff['max_embedding_cache']}")
-                                st.text(f"  • Max Frequent Cache: {mem_eff['max_frequent_cache']}")
-                                st.text(f"  • Max Recent Cache: {mem_eff['max_recent_cache']}")
+                            # Per-strategy breakdown
+                            strategy_stats = cache_stats.get('strategy_hits', {})
+                            if strategy_stats:
+                                st.subheader("Strategy Breakdown")
+                                for strategy_name, count in strategy_stats.items():
+                                    st.text(f"  {strategy_name}: {count}")
 
                         except Exception as e:
                             st.error(f"Error loading performance stats: {e}")
@@ -619,9 +531,8 @@ def main():
             if st.button("Export Analytics"):
                 if st.session_state.qdrant_cache:
                     try:
-                        perf_stats = st.session_state.qdrant_cache.get_performance_stats()
-                        # Create downloadable JSON
-                        json_str = json.dumps(perf_stats, indent=2)
+                        cache_stats = st.session_state.qdrant_cache.stats
+                        json_str = json.dumps(cache_stats, indent=2, default=str)
                         st.download_button(
                             label="Download Analytics JSON",
                             data=json_str,
@@ -633,16 +544,16 @@ def main():
                 else:
                     st.warning("No cache instance available.")
 
-        # NEW: Batch Operations
+        # Batch Operations
         with st.sidebar.expander("Batch Operations & Testing"):
-            st.subheader("🚀 Batch Query Testing")
+            st.subheader("Batch Query Testing")
 
             # Batch insert
             st.markdown("**Batch Insert Queries**")
             batch_file = st.file_uploader(
                 "Upload JSON file with queries",
                 type=["json"],
-                help="Upload a JSON file with format: [{\"question\": \"...\", \"cypher_query\": \"...\", \"response\": \"...\"}]"
+                help='Upload a JSON file with format: [{"question": "...", "generated_query": "...", "response_summary": "..."}]'
             )
 
             if batch_file is not None:
@@ -652,9 +563,11 @@ def main():
 
                     if st.button("Insert Batch"):
                         with st.spinner(f"Inserting {len(batch_data)} queries..."):
-                            success = st.session_state.qdrant_cache.store_batch_queries(batch_data)
+                            success = asyncio.run(
+                                st.session_state.qdrant_cache.store_batch(batch_data)
+                            )
                             if success:
-                                st.success(f"✅ Successfully inserted {len(batch_data)} queries!")
+                                st.success(f"Successfully inserted {len(batch_data)} queries!")
                             else:
                                 st.error("Failed to insert batch queries")
                 except json.JSONDecodeError as e:
@@ -667,15 +580,15 @@ def main():
                 example = [
                     {
                         "question": "Who are the employees?",
-                        "cypher_query": "MATCH (e:Employee) RETURN e",
-                        "response": "List of employees...",
-                        "template_used": "list_employees"
+                        "generated_query": "MATCH (e:Employee) RETURN e",
+                        "response_summary": "List of employees...",
+                        "template_id": "list_employees"
                     },
                     {
                         "question": "Show all projects",
-                        "cypher_query": "MATCH (p:Project) RETURN p",
-                        "response": "List of projects...",
-                        "template_used": None
+                        "generated_query": "MATCH (p:Project) RETURN p",
+                        "response_summary": "List of projects...",
+                        "template_id": None
                     }
                 ]
                 st.json(example)
@@ -693,24 +606,22 @@ def main():
                     questions_list = [q.strip() for q in batch_questions.split('\n') if q.strip()]
 
                     if questions_list:
-                        import asyncio
-
                         with st.spinner(f"Searching {len(questions_list)} queries concurrently..."):
                             try:
-                                # Run async batch search
-                                results = asyncio.run(
-                                    st.session_state.qdrant_cache.async_batch_search(questions_list)
-                                )
+                                async def _batch_search(questions):
+                                    tasks = [st.session_state.qdrant_cache.search(q) for q in questions]
+                                    return await asyncio.gather(*tasks)
 
-                                st.success(f"✅ Completed {len(results)} searches!")
+                                results = asyncio.run(_batch_search(questions_list))
 
-                                # Display results
+                                st.success(f"Completed {len(results)} searches!")
+
                                 for i, (question, result) in enumerate(zip(questions_list, results)):
                                     with st.expander(f"Query {i+1}: {question[:50]}..."):
                                         st.markdown(f"**Strategy:** {get_strategy_badge(result.strategy)}", unsafe_allow_html=True)
                                         st.metric("Confidence", f"{result.confidence:.2%}")
-                                        if result.cypher_query:
-                                            st.code(result.cypher_query, language="cypher")
+                                        if result.generated_query:
+                                            st.code(result.generated_query, language="cypher")
                                         else:
                                             st.warning("No match found")
                             except Exception as e:
