@@ -93,7 +93,7 @@ def get_strategy_badge(strategy):
         SearchStrategy.FUZZY_MATCH: '<span class="strategy-badge fuzzy-badge">FUZZY MATCH</span>',
         SearchStrategy.L1_CACHE: '<span class="strategy-badge l1-badge">L1 CACHE</span>',
     }
-    # Also support string "llm" set by the app itself
+    # Also support string "llm" used for display logic
     if strategy == "llm":
         return '<span class="strategy-badge llm-badge">LLM GENERATED</span>'
     return badges.get(strategy, f'<span class="strategy-badge">{strategy}</span>')
@@ -102,7 +102,17 @@ def display_cache_result_info(cache_hit):
     """Display information about cache search results"""
     strategy = cache_hit.strategy
 
-    if strategy == SearchStrategy.L1_CACHE:
+    # Check if this was a manually created CacheHit for an LLM fallback
+    if strategy == SearchStrategy.NO_MATCH and cache_hit.generated_query:
+        st.markdown(
+            f'<div class="cache-info">'
+            f'{get_strategy_badge("llm")}'
+            f'<strong>New query generated!</strong> No cache match found, used LLM to generate fresh Cypher query.'
+            f'<br><small>Confidence: {cache_hit.confidence:.2%}</small>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+    elif strategy == SearchStrategy.L1_CACHE:
         st.markdown(
             f'<div class="cache-info">'
             f'{get_strategy_badge(SearchStrategy.L1_CACHE)}'
@@ -143,15 +153,6 @@ def display_cache_result_info(cache_hit):
             f'<div class="cache-info">'
             f'{get_strategy_badge(SearchStrategy.FUZZY_MATCH)}'
             f'<strong>Fuzzy match found!</strong> Using string similarity to find similar query.'
-            f'<br><small>Confidence: {cache_hit.confidence:.2%}</small>'
-            f'</div>',
-            unsafe_allow_html=True
-        )
-    elif strategy == "llm":
-        st.markdown(
-            f'<div class="cache-info">'
-            f'{get_strategy_badge("llm")}'
-            f'<strong>New query generated!</strong> No cache match found, used LLM to generate fresh Cypher query.'
             f'<br><small>Confidence: {cache_hit.confidence:.2%}</small>'
             f'</div>',
             unsafe_allow_html=True
@@ -304,8 +305,14 @@ def main():
 
                     # Case 1: Full response found in cache
                     if cache_hit.response_summary:
+                        try:
+                            # Cache stored as string, decode back to list/dict for display
+                            data_decoded = json.loads(cache_hit.response_summary) if isinstance(cache_hit.response_summary, str) else cache_hit.response_summary
+                        except:
+                            data_decoded = cache_hit.response_summary
+
                         st.session_state.llm_result = {
-                            "data": cache_hit.response_summary,
+                            "data": data_decoded,
                             "cypher_query": generated_query,
                             "cached": True,
                             "strategy": cache_hit.strategy,
@@ -313,7 +320,7 @@ def main():
                         }
                         st.success("Response found in cache!")
                     else:
-                        # Case 2: Cypher query found but no response
+                        # Case 2: Cypher query found but no response summary
                         if generated_query and cache_hit.confidence > 0.0:
                             st.info(f"Running Cypher queries from cache ({cache_hit.strategy})...")
                             try:
@@ -328,10 +335,13 @@ def main():
                                         st.warning("Cypher query executed but no results found. Fallback to LLM...")
                                         result = None
                                     else:
+                                        # FIX: JSON Stringify the response summary before storing
+                                        summary_to_cache = json.dumps(current_result["data"])
+                                        
                                         st.session_state.qdrant_cache.store_sync(
                                             question=question,
                                             generated_query=generated_query,
-                                            response_summary=current_result["data"],
+                                            response_summary=summary_to_cache,
                                             template_id=cache_hit.template_used
                                         )
                                         st.session_state.llm_result = {
@@ -358,10 +368,13 @@ def main():
                                     data_schema=graph_schema
                                 )
                                 if result and result.get("data"):
+                                    # FIX: JSON Stringify the response summary before storing
+                                    summary_to_cache = json.dumps(result["data"])
+
                                     st.session_state.qdrant_cache.store_sync(
                                         question=question,
                                         generated_query=result["cypher_query"],
-                                        response_summary=result["data"]
+                                        response_summary=summary_to_cache
                                     )
                                     st.session_state.llm_result = {
                                         **result,
@@ -369,11 +382,13 @@ def main():
                                         "strategy": "llm",
                                         "confidence": 1.0
                                     }
+                                    
+                                    # FIX: Use valid Enum (NO_MATCH) and stringified summary for the CacheHit object
                                     st.session_state.last_cache_hit = CacheHit(
                                         generated_query=result["cypher_query"],
-                                        response_summary=result["data"],
+                                        response_summary=summary_to_cache,
                                         confidence=1.0,
-                                        strategy="llm",
+                                        strategy=SearchStrategy.NO_MATCH,
                                         template_used=None
                                     )
                                     st.success("Query generated and cached!")
@@ -400,7 +415,6 @@ def main():
             if table_data:
                 try:
                     df = pd.DataFrame(table_data)
-                    # Replace any remaining None values with empty strings
                     df = df.fillna("")
                     if df.shape[0] > 100:
                         st.dataframe(df.head(100))
@@ -425,7 +439,7 @@ def main():
                 step=0.05,
                 format="%.2f",
                 key='template_threshold_slider',
-                help="Minimum confidence for template matching. Lower values allow more flexible matching.",
+                help="Minimum confidence for template matching.",
             )
 
             st.session_state.exact_threshold = st.slider(
@@ -447,7 +461,7 @@ def main():
                 step=1.0,
                 format="%.1f",
                 key='fuzzy_threshold_slider',
-                help="Minimum string similarity (Levenshtein) for fuzzy matching (70-100).",
+                help="Minimum string similarity (Levenshtein) for fuzzy matching.",
             )
 
             st.session_state.similarity_threshold = st.slider(
@@ -463,12 +477,12 @@ def main():
 
             st.info(
                 "**Cache Strategies (Waterfall):**\n\n"
-                "1. **L1 Memory** - Recent queries (in-memory LRU)\n"
-                "2. **Template Matching** - Pattern-based query generation\n"
+                "1. **L1 Memory** - Recent queries\n"
+                "2. **Template Matching** - Pattern-based generation\n"
                 "3. **Exact Match** - High-confidence vector match\n"
                 "4. **Semantic Similarity** - Meaning-based matching\n"
-                "5. **Fuzzy Matching** - String similarity (Levenshtein)\n"
-                "6. **LLM Fallback** - Generate new query when needed"
+                "5. **Fuzzy Matching** - String similarity\n"
+                "6. **LLM Fallback** - Generate new query"
             )
 
         with st.sidebar.expander("Cache Management"):
@@ -483,8 +497,6 @@ def main():
                         st.session_state.qdrant_cache = initialize_cache()
                         if st.session_state.qdrant_cache:
                             st.success("Cache reset successfully!")
-                        else:
-                            st.error("Error reinitializing cache.")
                     except Exception as e:
                         st.error(f"Error resetting cache: {e}")
 
@@ -493,205 +505,69 @@ def main():
                     if st.session_state.qdrant_cache:
                         st.session_state.qdrant_cache.clear_caches()
                         st.success("Memory caches cleared!")
-                    else:
-                        st.warning("No cache instance available.")
-
-            st.info("**Reset Cache:** Closes and reinitializes the cache\n"
-                   "**Clear Memory:** Clears in-memory caches only")
 
         with st.sidebar.expander("Performance Analytics"):
             if st.button("View Performance Stats"):
                 if st.session_state.qdrant_cache:
-                    with st.spinner("Loading performance analytics..."):
+                    with st.spinner("Loading stats..."):
                         try:
                             cache_stats = st.session_state.qdrant_cache.stats
-
                             st.subheader("Cache Performance")
                             col_perf_a, col_perf_b = st.columns(2)
                             with col_perf_a:
                                 st.metric("Hit Rate", f"{cache_stats.get('hit_rate', 0):.1f}%")
                                 st.metric("Total Requests", cache_stats.get('total_requests', 0))
-
                             with col_perf_b:
                                 st.metric("Cached Queries", cache_stats.get('total_cached_queries', 0))
                                 st.metric("Templates", cache_stats.get('templates_count', 0))
-
-                            # Per-strategy breakdown
-                            strategy_stats = cache_stats.get('strategy_hits', {})
-                            if strategy_stats:
-                                st.subheader("Strategy Breakdown")
-                                for strategy_name, count in strategy_stats.items():
-                                    st.text(f"  {strategy_name}: {count}")
-
                         except Exception as e:
-                            st.error(f"Error loading performance stats: {e}")
-                else:
-                    st.warning("No cache instance available.")
+                            st.error(f"Error: {e}")
 
-            if st.button("Export Analytics"):
-                if st.session_state.qdrant_cache:
-                    try:
-                        cache_stats = st.session_state.qdrant_cache.stats
-                        json_str = json.dumps(cache_stats, indent=2, default=str)
-                        st.download_button(
-                            label="Download Analytics JSON",
-                            data=json_str,
-                            file_name="cache_analytics.json",
-                            mime="application/json"
-                        )
-                    except Exception as e:
-                        st.error(f"Error exporting analytics: {e}")
-                else:
-                    st.warning("No cache instance available.")
-
-        # Batch Operations
         with st.sidebar.expander("Batch Operations & Testing"):
             st.subheader("Batch Query Testing")
-
-            # Batch insert
-            st.markdown("**Batch Insert Queries**")
-            batch_file = st.file_uploader(
-                "Upload JSON file with queries",
-                type=["json"],
-                help='Upload a JSON file with format: [{"question": "...", "generated_query": "...", "response_summary": "..."}]'
-            )
+            batch_file = st.file_uploader("Upload JSON file", type=["json"])
 
             if batch_file is not None:
                 try:
                     batch_data = json.load(batch_file)
-                    st.info(f"Loaded {len(batch_data)} queries from file")
-
                     if st.button("Insert Batch"):
                         with st.spinner(f"Inserting {len(batch_data)} queries..."):
-                            success = asyncio.run(
-                                st.session_state.qdrant_cache.store_batch(batch_data)
-                            )
-                            if success:
-                                st.success(f"Successfully inserted {len(batch_data)} queries!")
-                            else:
-                                st.error("Failed to insert batch queries")
-                except json.JSONDecodeError as e:
-                    st.error(f"Invalid JSON format: {e}")
+                            # FIX: Ensure response_summary in batch is stringified if provided as object
+                            for item in batch_data:
+                                if "response_summary" in item and not isinstance(item["response_summary"], str):
+                                    item["response_summary"] = json.dumps(item["response_summary"])
+                            
+                            success = asyncio.run(st.session_state.qdrant_cache.store_batch(batch_data))
+                            if success: st.success("Success!")
                 except Exception as e:
-                    st.error(f"Error loading file: {e}")
+                    st.error(f"Error: {e}")
 
-            # Sample batch format
-            if st.button("Show Example Batch Format"):
-                example = [
-                    {
-                        "question": "Who are the employees?",
-                        "generated_query": "MATCH (e:Employee) RETURN e",
-                        "response_summary": "List of employees...",
-                        "template_id": "list_employees"
-                    },
-                    {
-                        "question": "Show all projects",
-                        "generated_query": "MATCH (p:Project) RETURN p",
-                        "response_summary": "List of projects...",
-                        "template_id": None
-                    }
-                ]
-                st.json(example)
-
-            # Async batch search
-            st.markdown("**Async Batch Search (Concurrent)**")
-            batch_questions = st.text_area(
-                "Enter questions (one per line)",
-                height=100,
-                help="Enter multiple questions to search concurrently using async operations"
-            )
-
-            if st.button("Run Async Batch Search"):
-                if batch_questions:
-                    questions_list = [q.strip() for q in batch_questions.split('\n') if q.strip()]
-
-                    if questions_list:
-                        with st.spinner(f"Searching {len(questions_list)} queries concurrently..."):
-                            try:
-                                async def _batch_search(questions):
-                                    tasks = [st.session_state.qdrant_cache.search(q) for q in questions]
-                                    return await asyncio.gather(*tasks)
-
-                                results = asyncio.run(_batch_search(questions_list))
-
-                                st.success(f"Completed {len(results)} searches!")
-
-                                for i, (question, result) in enumerate(zip(questions_list, results)):
-                                    with st.expander(f"Query {i+1}: {question[:50]}..."):
-                                        st.markdown(f"**Strategy:** {get_strategy_badge(result.strategy)}", unsafe_allow_html=True)
-                                        st.metric("Confidence", f"{result.confidence:.2%}")
-                                        if result.generated_query:
-                                            st.code(result.generated_query, language="cypher")
-                                        else:
-                                            st.warning("No match found")
-                            except Exception as e:
-                                st.error(f"Error in async batch search: {e}")
-                    else:
-                        st.warning("Please enter at least one question")
-                else:
-                    st.warning("Please enter questions to search")
-
-        # Keep existing GDS functionality
-        with st.sidebar.expander("Create Graph Projection"):
+        # GDS Functionality
+        with st.sidebar.expander("Graph Projections & GDS"):
             graph_name = st.text_input("Projection Name")
-            node_labels_input = st.text_area("Node Labels (separated by commas)")
-            relationship_types_input = st.text_area("Relationship Types (separated by commas)")
+            node_labels_input = st.text_area("Node Labels (comma separated)")
+            relationship_types_input = st.text_area("Relationship Types (comma separated)")
 
             if st.button("Create Projection"):
-                gds = st.session_state.gds
+                if graph_name and node_labels_input and relationship_types_input:
+                    node_labels_list = [l.strip() for l in node_labels_input.split(",") if l.strip()]
+                    relationship_types_list = [r.strip() for r in relationship_types_input.split(",") if r.strip()]
+                    with st.spinner("Creating..."):
+                        msg = st.session_state.gds.create_projection(graph_name, node_labels_list, relationship_types_list)
+                        st.success(msg)
 
-                node_labels_list = [label.strip() for label in node_labels_input.split(",") if label.strip()]
-                relationship_types_list = [rel.strip() for rel in relationship_types_input.split(",") if rel.strip()]
-
-                if not graph_name:
-                    st.warning("Please enter a projection name.")
-                elif not node_labels_list:
-                    st.warning("Please enter at least one node label.")
-                elif not relationship_types_list:
-                    st.warning("Please enter at least one relationship type.")
-                else:
-                    with st.spinner("Creating graph projection..."):
-                        msg = gds.create_projection(graph_name, node_labels_list, relationship_types_list)
-                        st.success(msg if "✅" in msg else msg)
-
-            if st.button("Delete All Projections"):
-                with st.spinner("Deleting all GDS projections..."):
-                    msg = st.session_state.gds.delete_all_projections()
-                    st.success(msg if "✅" in msg else msg)
-
-        with st.sidebar.expander("Run GDS Algorithm"):
-            gds_graph_name = st.text_input("Graph name for GDS algorithm")
-            algo = st.selectbox(
-                "Choose GDS Algorithm",
-                ["PageRank", "Betweenness Centrality", "Closeness Centrality", "Louvain", "Node Similarity"]
-            )
-
-            if st.button("Run Algorithm"):
-                if not gds_graph_name:
-                    st.sidebar.warning("Please provide a graph projection name.")
-                else:
-                    with st.spinner(f"Running {algo} on {gds_graph_name}..."):
+            algo = st.selectbox("GDS Algorithm", ["PageRank", "Betweenness Centrality", "Closeness Centrality", "Louvain", "Node Similarity"])
+            if st.button("Run GDS Algorithm"):
+                if graph_name:
+                    with st.spinner(f"Running {algo}..."):
                         gds = st.session_state.gds
-
-                        if algo == "PageRank":
-                            gds_results = gds.run_pagerank(gds_graph_name)
-                        elif algo == "Betweenness Centrality":
-                            gds_results = gds.run_betweenness(gds_graph_name)
-                        elif algo == "Closeness Centrality":
-                            gds_results = gds.run_closeness(gds_graph_name)
-                        elif algo == "Louvain":
-                            gds_results = gds.run_louvain(gds_graph_name)
-                        elif algo == "Node Similarity":
-                            gds_results = gds.run_similarity(gds_graph_name)
-                        else:
-                            gds_results = [{"error": "Unknown algorithm selected."}]
-
-                        if isinstance(gds_results, list) and "error" in gds_results[0]:
-                            st.error(gds_results[0]["error"])
-                        else:
-                            st.subheader(f"Results of {algo}:")
-                            df = pd.DataFrame(gds_results)
-                            st.dataframe(df)
+                        if algo == "PageRank": gds_results = gds.run_pagerank(graph_name)
+                        elif algo == "Betweenness Centrality": gds_results = gds.run_betweenness(graph_name)
+                        elif algo == "Closeness Centrality": gds_results = gds.run_closeness(graph_name)
+                        elif algo == "Louvain": gds_results = gds.run_louvain(graph_name)
+                        elif algo == "Node Similarity": gds_results = gds.run_similarity(graph_name)
+                        
+                        st.dataframe(pd.DataFrame(gds_results))
 
 if __name__ == "__main__":
     main()

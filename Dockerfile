@@ -7,6 +7,9 @@ WORKDIR /app
 # Copy the project files into the container
 COPY . /app
 
+# Aggiorna i pacchetti e installa git
+RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
+
 # Install dependencies from requirements.txt
 RUN pip install --no-cache-dir -r requirements_docker.txt
 

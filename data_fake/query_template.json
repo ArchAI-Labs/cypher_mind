@@ -1,53 +1,55 @@
 [
   {
+    "template_text": "get top {count} users from project {project}",
+    "query_template": "MATCH (p:Person)-[:WORKS_ON]->(proj:Project {name: '{project}'}) RETURN p LIMIT {count}",
     "intent": "get_top_users_by_project",
-    "template": "get top {count} users from project {project}",
-    "parameters": ["count", "project"],
-    "cypher_template": "MATCH (p:Person)-[:WORKS_ON]->(proj:Project {name: '{project}'}) RETURN p LIMIT {count}",
+    "parameters": [
+      "count",
+      "project"
+    ],
     "priority": 1,
-    "aliases": ["show first {count} users in project {project}", "list top {count} people from {project}"],
-    "parameter_patterns": {
-      "count": "\\b(?:top|first)\\s+(\\d+)\\b",
-      "project": "project\\s+([A-Za-z0-9_]+)"
-    }
-  },
-  {
-    "intent": "list_projects_by_user",
-    "template": "list projects for user {user}",
-    "parameters": ["user"],
-    "cypher_template": "MATCH (p:Person {name: '{user}'})-[:WORKS_ON]->(proj:Project) RETURN proj.title AS ProjectTitle",
-    "priority": 1,
-    "aliases": ["show projects of {user}", "what projects does {user} work on", "what projects is {user} working on"],
-    "parameter_patterns": {
-      "user": "(?:for|of|does|is)\\s+([A-Za-z]+(?:\\s+[A-Za-z]+)?)(?:\\s+work(?:ing|s)?\\s+on)?"
-    }
-  },
-  {
-    "intent": "list_user_by_company",
-    "template": "list all people who work for company {company}",
-    "parameters": ["company"],
-    "cypher_template": "MATCH (p:Person)-[:WORKS_FOR]->(c:Company {name: '{company}'}) RETURN p.name AS PersonName",
-    "priority": 2,
-    "aliases": ["who works at {company}", "all staff from {company}", "find people in {company}", "employees of {company}"],
-    "parameter_patterns": {
-      "company": "(?:company|for|at|in|of)\\s+([A-Za-z][A-Za-z0-9\\s\\-;,&\\.]+?)(?=\\s*\\?*$)"
-    }
-  },
-  {
-    "intent": "list_project_and_company_by_user",
-    "template": "find projects {user} works on and company he works for",
-    "parameters": ["user"],
-    "cypher_template": "MATCH (p:Person {name: '{user}'})-[:WORKS_ON]->(proj:Project) OPTIONAL MATCH (p)-[:WORKS_FOR]->(comp:Company) RETURN proj.title AS Project, comp.name AS Company",
-    "priority": 3,
     "aliases": [
-      "what projects is {user} involved in and where does he work",
-      "show {user}'s projects and employer",
-      "which company does {user} work for and what are his projects",
-      "get {user}'s work details",
-      "info on {user}'s projects and company"
+      "show first {count} users in project {project}",
+      "list top {count} people from {project}"
     ],
     "parameter_patterns": {
-      "user": "(?:is\\s+|does\\s+)?([A-Za-z]+(?:\\s+[A-Za-z]+)?)(?:\\s+work(?:ing|s)?)"
+      "count": "\\b(\\d+)\\b",
+      "project": "(?:project\\s+)?(['\"]?)([A-Za-z0-9_\\s]+)\\1"
+    }
+  },
+  {
+    "template_text": "list projects for user {user}",
+    "query_template": "MATCH (p:Person {name: '{user}'})-[:WORKS_ON]->(proj:Project) RETURN proj.title AS ProjectTitle",
+    "intent": "list_projects_by_user",
+    "parameters": [
+      "user"
+    ],
+    "priority": 1,
+    "aliases": [
+      "show projects of {user}",
+      "what projects does {user} work on",
+      "what projects is {user} working on"
+    ],
+    "parameter_patterns": {
+      "user": "(?:for|of|is|user)\\s+(['\"]?)([A-Za-z\\s]+)\\1"
+    }
+  },
+  {
+    "template_text": "list all people who work for company {company}",
+    "query_template": "MATCH (p:Person)-[:WORKS_FOR]->(c:Company {name: '{company}'}) RETURN p.name AS PersonName",
+    "intent": "list_user_by_company",
+    "parameters": [
+      "company"
+    ],
+    "priority": 2,
+    "aliases": [
+      "who works at {company}",
+      "all staff from {company}",
+      "find people in {company}",
+      "employees of {company}"
+    ],
+    "parameter_patterns": {
+      "company": "(?:company|for|at|in|of)\\s+(['\"]?)([A-Za-z0-9\\s\\.\\-,&]+)\\1"
     }
   }
 ]
