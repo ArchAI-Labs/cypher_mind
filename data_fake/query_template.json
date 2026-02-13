@@ -14,7 +14,7 @@
     ],
     "parameter_patterns": {
       "count": "\\b(\\d+)\\b",
-      "project": "(?:project\\s+)?(['\"]?)([A-Za-z0-9_\\s]+)\\1"
+      "project": "(?:project\\s+)(?:['\"]?)([A-Za-z0-9_\\s]+?)(?:['\"]?)$"
     }
   },
   {
@@ -27,11 +27,11 @@
     "priority": 1,
     "aliases": [
       "show projects of {user}",
-      "what projects does {user} work on",
-      "what projects is {user} working on"
+      "what projects is {user} working on",
+      "what projects does {user} work on"
     ],
     "parameter_patterns": {
-      "user": "(?:for|of|is|user)\\s+(['\"]?)([A-Za-z\\s]+)\\1"
+      "user": "(?:user|for|of|is)\\s+(?:['\"]?)([A-Za-z]+(?:\\s+[A-Za-z]+)?)(?:['\"]?)(?:\\s+working|\\s+work|\\?|$)"
     }
   },
   {
@@ -49,7 +49,7 @@
       "employees of {company}"
     ],
     "parameter_patterns": {
-      "company": "(?:company|for|at|in|of)\\s+(['\"]?)([A-Za-z0-9\\s\\.\\-,&]+)\\1"
+      "company": "(?:company|for|at|in|of)\\s+(?:['\"]?)([A-Za-z0-9\\s\\.\\-,&]+?)(?:['\"]?)(?:\\?|$)"
     }
   }
 ]
