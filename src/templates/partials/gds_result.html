@@ -1,0 +1,29 @@
+{% if results %}
+<div class="mt-2">
+    <p class="text-xs font-medium text-gray-600 mb-2">{{ algorithm }} — {{ results | length }} nodes</p>
+    <div class="overflow-x-auto rounded-lg border border-gray-200">
+        <table class="min-w-full text-xs">
+            <thead class="bg-[#00274A] text-white">
+                <tr>
+                    {% for col in results[0].keys() %}
+                    <th class="px-2 py-1.5 text-left font-medium whitespace-nowrap">{{ col }}</th>
+                    {% endfor %}
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-100 bg-white">
+                {% for row in results %}
+                <tr class="hover:bg-gray-50">
+                    {% for val in row.values() %}
+                    <td class="px-2 py-1.5 text-gray-700">
+                        {% if val is float %}{{ "%.4f" | format(val) }}{% else %}{{ val }}{% endif %}
+                    </td>
+                    {% endfor %}
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% else %}
+<p class="text-xs text-gray-400 italic mt-2">No results.</p>
+{% endif %}

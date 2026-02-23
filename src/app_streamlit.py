@@ -207,7 +207,7 @@ def main():
     # Display optimization info banner
     st.info(
         "**Powered by Medha Semantic Cache** | "
-        "5-tier waterfall search | "
+        "6-tier waterfall search | "
         "L1 Memory + Templates + Vector + Semantic + Fuzzy"
     )
 

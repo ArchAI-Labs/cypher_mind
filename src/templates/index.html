@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CypherMind - ArchAI</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+    <script>
+        tailwind.config = {
+            theme: { extend: { colors: { primary: '#00274A' } } }
+        }
+    </script>
+    <style>
+        .htmx-indicator { display: none; }
+        .htmx-request .htmx-indicator { display: flex; }
+        details > summary { list-style: none; }
+        details > summary::-webkit-details-marker { display: none; }
+        details > summary::after { content: ' ▸'; font-size: 0.75rem; }
+        details[open] > summary::after { content: ' ▾'; }
+    </style>
+</head>
+<body class="bg-[#F8F7F4] text-[#00274A] min-h-screen">
+<div class="max-w-7xl mx-auto px-4 py-6">
+
+    <!-- Header -->
+    <div class="flex items-center gap-4 mb-6">
+        <img src="/img/logo_cyphermind.png" alt="CypherMind" class="h-12">
+        <div>
+            <h1 class="text-2xl font-bold">ArchAI - CypherMind</h1>
+            <p class="text-sm text-gray-500">Natural Language to Cypher</p>
+        </div>
+    </div>
+
+    <!-- Info banner -->
+    <div class="bg-blue-50 border border-blue-200 rounded-lg px-4 py-2.5 mb-5 text-sm text-blue-800 flex items-center justify-between gap-4 flex-wrap">
+        <span>
+            <strong>Powered by Medha Semantic Cache</strong> &nbsp;|&nbsp;
+            6-tier waterfall: L1 Memory → Templates → Exact → Semantic → Fuzzy → LLM
+        </span>
+        <!-- Medha badge -->
+        <a href="https://github.com/ArchAI-Labs/medha"
+           target="_blank" rel="noopener noreferrer"
+           class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-white text-xs font-semibold no-underline shrink-0 hover:opacity-90 transition-opacity"
+           style="background-color:#20c997; text-decoration:none;">
+            <!-- GitHub mark -->
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57
+                         0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41
+                         -1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23
+                         1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605
+                         -2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225
+                         -.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405
+                         3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24
+                         2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475
+                         5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3
+                         0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+            </svg>
+            Powered by Medha
+        </a>
+    </div>
+
+    <!-- Stats (auto-loaded, refreshed every 30s, and after every query) -->
+    <div id="stats-container"
+         hx-get="/stats"
+         hx-trigger="load, every 30s, refreshStats from:body"
+         hx-swap="innerHTML"
+         class="mb-6">
+    </div>
+
+    <!-- Two-column layout -->
+    <div class="flex gap-6 items-start">
+
+        <!-- ── Main column ─────────────────────────────────────────────── -->
+        <div class="flex-1 min-w-0">
+
+            <!-- Sample questions selector -->
+            <div class="mb-3">
+                <label class="block text-sm font-medium mb-1">Example question:</label>
+                <select id="sample-select"
+                        class="w-full border border-gray-300 rounded-lg px-3 py-2 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#00274A]"
+                        onchange="setQuestion(this.value)">
+                    {% for key in sample_questions %}
+                    <option value="{{ key }}">{{ key }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <!-- Query form -->
+            <form id="query-form"
+                  hx-post="/query"
+                  hx-target="#query-result"
+                  hx-swap="innerHTML"
+                  hx-indicator="#spinner"
+                  class="space-y-3">
+
+                <div>
+                    <label class="block text-sm font-medium mb-1">Natural language question:</label>
+                    <textarea id="question" name="question" rows="4"
+                              class="w-full border border-gray-300 rounded-lg px-3 py-2 bg-white text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[#00274A]"
+                              placeholder="Ask something about your graph..."></textarea>
+                </div>
+
+                <!-- Threshold hidden inputs (kept in sync with sidebar sliders) -->
+                <input type="hidden" id="f_template_threshold"   name="template_threshold"   value="0.70">
+                <input type="hidden" id="f_exact_threshold"      name="exact_threshold"      value="0.99">
+                <input type="hidden" id="f_fuzzy_threshold"      name="fuzzy_threshold"      value="85.0">
+                <input type="hidden" id="f_similarity_threshold" name="similarity_threshold" value="0.90">
+
+                <div class="flex items-center gap-3">
+                    <button type="submit"
+                            class="bg-[#00274A] text-white px-5 py-2 rounded-lg text-sm font-medium hover:bg-[#00407a] transition-colors">
+                        Run
+                    </button>
+                    <button type="button"
+                            onclick="document.getElementById('query-result').innerHTML=''"
+                            class="border border-[#00274A] text-[#00274A] px-5 py-2 rounded-lg text-sm font-medium hover:bg-gray-100 transition-colors">
+                        Clear
+                    </button>
+                    <!-- Loading indicator -->
+                    <div id="spinner" class="htmx-indicator items-center gap-2 text-sm text-gray-500">
+                        <svg class="animate-spin h-4 w-4 text-[#00274A]" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
+                        </svg>
+                        Processing…
+                    </div>
+                </div>
+            </form>
+
+            <!-- Results area -->
+            <div id="query-result" class="mt-6"></div>
+        </div>
+
+        <!-- ── Sidebar ──────────────────────────────────────────────────── -->
+        <div class="w-72 shrink-0 space-y-3">
+
+            <!-- Cache Settings -->
+            <details class="bg-white rounded-xl border border-gray-200 p-4" open>
+                <summary class="font-semibold text-sm cursor-pointer select-none">Cache Settings</summary>
+                <div class="mt-4 space-y-4">
+
+                    <div>
+                        <div class="flex justify-between text-xs text-gray-500 mb-1">
+                            <span>Template Match</span>
+                            <span id="disp_template_threshold">0.70</span>
+                        </div>
+                        <input type="range" min="0.5" max="1.0" step="0.05" value="0.70" class="w-full accent-[#00274A]"
+                               oninput="syncSlider('template_threshold', this.value)">
+                    </div>
+
+                    <div>
+                        <div class="flex justify-between text-xs text-gray-500 mb-1">
+                            <span>Exact Match</span>
+                            <span id="disp_exact_threshold">0.99</span>
+                        </div>
+                        <input type="range" min="0.9" max="1.0" step="0.01" value="0.99" class="w-full accent-[#00274A]"
+                               oninput="syncSlider('exact_threshold', this.value)">
+                    </div>
+
+                    <div>
+                        <div class="flex justify-between text-xs text-gray-500 mb-1">
+                            <span>Fuzzy Match</span>
+                            <span id="disp_fuzzy_threshold">85.0</span>
+                        </div>
+                        <input type="range" min="70" max="100" step="1" value="85" class="w-full accent-[#00274A]"
+                               oninput="syncSlider('fuzzy_threshold', this.value)">
+                    </div>
+
+                    <div>
+                        <div class="flex justify-between text-xs text-gray-500 mb-1">
+                            <span>Semantic Similarity</span>
+                            <span id="disp_similarity_threshold">0.90</span>
+                        </div>
+                        <input type="range" min="0.7" max="0.95" step="0.01" value="0.90" class="w-full accent-[#00274A]"
+                               oninput="syncSlider('similarity_threshold', this.value)">
+                    </div>
+
+                    <div class="bg-blue-50 rounded-lg p-3 text-xs text-gray-600 leading-relaxed">
+                        <strong class="text-gray-800">Waterfall order:</strong><br>
+                        1. L1 Memory &nbsp;2. Templates &nbsp;3. Exact<br>
+                        4. Semantic &nbsp;5. Fuzzy &nbsp;6. LLM
+                    </div>
+                </div>
+            </details>
+
+            <!-- Cache Management -->
+            <details class="bg-white rounded-xl border border-gray-200 p-4">
+                <summary class="font-semibold text-sm cursor-pointer select-none">Cache Management</summary>
+                <div class="mt-4 space-y-2">
+                    <button hx-post="/cache/reset"
+                            hx-target="#cache-mgmt-msg"
+                            hx-swap="innerHTML"
+                            class="w-full bg-[#00274A] text-white px-3 py-1.5 rounded text-xs font-medium hover:bg-[#00407a] transition-colors">
+                        Reset Cache
+                    </button>
+                    <button hx-post="/cache/clear-memory"
+                            hx-target="#cache-mgmt-msg"
+                            hx-swap="innerHTML"
+                            class="w-full border border-[#00274A] text-[#00274A] px-3 py-1.5 rounded text-xs font-medium hover:bg-gray-100 transition-colors">
+                        Clear L1 Memory
+                    </button>
+                    <div id="cache-mgmt-msg" class="text-xs mt-1"></div>
+                </div>
+            </details>
+
+            <!-- Performance Analytics -->
+            <details class="bg-white rounded-xl border border-gray-200 p-4">
+                <summary class="font-semibold text-sm cursor-pointer select-none">Performance Analytics</summary>
+                <div class="mt-4">
+                    <button hx-get="/stats"
+                            hx-target="#perf-detail"
+                            hx-swap="innerHTML"
+                            class="w-full bg-[#00274A] text-white px-3 py-1.5 rounded text-xs font-medium hover:bg-[#00407a] transition-colors mb-3">
+                        Refresh Stats
+                    </button>
+                    <div id="perf-detail"></div>
+                </div>
+            </details>
+
+            <!-- Batch Operations -->
+            <details class="bg-white rounded-xl border border-gray-200 p-4">
+                <summary class="font-semibold text-sm cursor-pointer select-none">Batch Operations</summary>
+                <div class="mt-4">
+                    <form hx-post="/cache/batch"
+                          hx-target="#batch-msg"
+                          hx-swap="innerHTML"
+                          hx-encoding="multipart/form-data"
+                          class="space-y-2">
+                        <input type="file" name="batch_file" accept=".json"
+                               class="block w-full text-xs text-gray-600
+                                      file:mr-2 file:py-1 file:px-3 file:rounded
+                                      file:border-0 file:bg-[#00274A] file:text-white file:text-xs file:cursor-pointer">
+                        <button type="submit"
+                                class="w-full bg-[#00274A] text-white px-3 py-1.5 rounded text-xs font-medium hover:bg-[#00407a] transition-colors">
+                            Insert Batch
+                        </button>
+                    </form>
+                    <div id="batch-msg" class="text-xs mt-2"></div>
+                </div>
+            </details>
+
+            <!-- GDS -->
+            <details class="bg-white rounded-xl border border-gray-200 p-4">
+                <summary class="font-semibold text-sm cursor-pointer select-none">Graph Projections & GDS</summary>
+                <div class="mt-4 space-y-4">
+
+                    <!-- Create projection -->
+                    <form hx-post="/gds/projection"
+                          hx-target="#gds-proj-msg"
+                          hx-swap="innerHTML"
+                          class="space-y-2">
+                        <input type="text" name="graph_name" placeholder="Projection name"
+                               class="w-full border border-gray-300 rounded px-2 py-1.5 text-xs">
+                        <textarea name="node_labels" placeholder="Node labels (comma separated)" rows="2"
+                                  class="w-full border border-gray-300 rounded px-2 py-1.5 text-xs"></textarea>
+                        <textarea name="relationship_types" placeholder="Relationship types (comma separated)" rows="2"
+                                  class="w-full border border-gray-300 rounded px-2 py-1.5 text-xs"></textarea>
+                        <button type="submit"
+                                class="w-full bg-[#00274A] text-white px-3 py-1.5 rounded text-xs font-medium hover:bg-[#00407a] transition-colors">
+                            Create Projection
+                        </button>
+                    </form>
+                    <div id="gds-proj-msg" class="text-xs"></div>
+
+                    <!-- Run algorithm -->
+                    <form hx-post="/gds/algorithm"
+                          hx-target="#gds-algo-result"
+                          hx-swap="innerHTML"
+                          class="space-y-2 pt-3 border-t border-gray-100">
+                        <input type="text" name="graph_name" placeholder="Projection name"
+                               class="w-full border border-gray-300 rounded px-2 py-1.5 text-xs">
+                        <select name="algorithm"
+                                class="w-full border border-gray-300 rounded px-2 py-1.5 text-xs bg-white">
+                            <option>PageRank</option>
+                            <option>Betweenness Centrality</option>
+                            <option>Closeness Centrality</option>
+                            <option>Louvain</option>
+                            <option>Node Similarity</option>
+                        </select>
+                        <button type="submit"
+                                class="w-full bg-[#00274A] text-white px-3 py-1.5 rounded text-xs font-medium hover:bg-[#00407a] transition-colors">
+                            Run Algorithm
+                        </button>
+                    </form>
+                    <div id="gds-algo-result"></div>
+                </div>
+            </details>
+
+        </div><!-- /sidebar -->
+    </div><!-- /two-column -->
+</div><!-- /container -->
+
+<script>
+    // Sample questions map from server
+    const sampleQuestions = {
+        {% for key, value in sample_questions.items() %}
+        {{ key | tojson }}: {{ value | tojson }},
+        {% endfor %}
+    };
+
+    function setQuestion(key) {
+        const q = sampleQuestions[key];
+        if (q) document.getElementById('question').value = q;
+    }
+
+    // Initialize textarea with first question
+    const firstKey = Object.keys(sampleQuestions)[0];
+    if (firstKey) setQuestion(firstKey);
+
+    // Sync slider → hidden input + display span
+    function syncSlider(name, value) {
+        document.getElementById('f_' + name).value = value;
+        const parsed = parseFloat(value);
+        document.getElementById('disp_' + name).textContent =
+            name === 'fuzzy_threshold' ? parsed.toFixed(1) : parsed.toFixed(2);
+    }
+</script>
+</body>
+</html>

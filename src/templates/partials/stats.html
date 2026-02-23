@@ -1,0 +1,15 @@
+<div class="grid grid-cols-3 gap-4">
+    <div class="bg-white rounded-xl border border-gray-200 p-4 text-center">
+        <div class="text-2xl font-bold text-[#00274A]">{{ "%.1f" | format(stats.get('hit_rate', 0)) }}%</div>
+        <div class="text-xs text-gray-500 mt-1">Hit Rate</div>
+    </div>
+    <div class="bg-white rounded-xl border border-gray-200 p-4 text-center">
+        <div class="text-2xl font-bold text-[#00274A]">{{ stats.get('total_requests', 0) }}</div>
+        <div class="text-xs text-gray-500 mt-1">Total Requests</div>
+    </div>
+    <div class="bg-white rounded-xl border border-gray-200 p-4 text-center">
+        <div class="text-2xl font-bold text-[#00274A]">{{ stats.get('templates_loaded', 0) }}</div>
+        <div class="text-xs text-gray-500 mt-1">Templates Loaded</div>
+    </div>
+</div>
+

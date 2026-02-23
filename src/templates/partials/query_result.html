@@ -1,0 +1,64 @@
+{% if error %}
+<div class="bg-red-50 border border-red-200 rounded-lg p-4 text-sm text-red-700">
+    <strong>Error:</strong> {{ error }}
+</div>
+
+{% else %}
+
+{% if strategy_display %}
+<!-- Cache strategy banner — exact colors from Streamlit palette -->
+<div class="rounded-lg p-3 mb-4 text-sm" style="{{ strategy_display.banner_style }}">
+    <div class="flex items-center gap-2 flex-wrap">
+        <span class="text-xs font-bold px-2 py-0.5 rounded-full"
+              style="{{ strategy_display.badge_style }}">
+            {{ strategy_display.label }}
+        </span>
+        <span class="font-medium">{{ message }}</span>
+        {% if confidence is defined %}
+        <span class="ml-auto text-xs text-gray-500">Confidence: {{ "%.1f" | format(confidence * 100) }}%</span>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+
+{% if cypher_query %}
+<!-- Cypher query display -->
+<div class="mb-5">
+    <h3 class="font-semibold text-sm mb-2">Cypher Query</h3>
+    <pre class="bg-gray-900 text-green-400 rounded-xl p-4 text-xs font-mono overflow-x-auto whitespace-pre-wrap leading-relaxed">{{ cypher_query }}</pre>
+</div>
+{% endif %}
+
+<!-- Results table -->
+<div>
+    <h3 class="font-semibold text-sm mb-2">Results</h3>
+    {% if table_data %}
+    <div class="overflow-x-auto rounded-xl border border-gray-200">
+        <table class="min-w-full text-xs">
+            <thead style="background-color:#00274A; color:#ffffff;">
+                <tr>
+                    {% for col in table_data[0].keys() %}
+                    <th class="px-3 py-2 text-left font-medium whitespace-nowrap">{{ col }}</th>
+                    {% endfor %}
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-100 bg-white">
+                {% for row in table_data[:100] %}
+                <tr class="hover:bg-gray-50">
+                    {% for val in row.values() %}
+                    <td class="px-3 py-2 text-gray-700">{{ val }}</td>
+                    {% endfor %}
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% if table_data | length > 100 %}
+    <p class="text-xs text-gray-400 mt-2">Showing first 100 of {{ table_data | length }} rows.</p>
+    {% endif %}
+    {% else %}
+    <p class="text-sm text-gray-400 italic">No results found.</p>
+    {% endif %}
+</div>
+
+{% endif %}
