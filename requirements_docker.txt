@@ -1,7 +1,7 @@
 neo4j==5.28.1
 python-dotenv==1.1.0
 qdrant-client==1.13.3
-litellm==1.70.4
+litellm>=1.83.0
 medha[fastembed,fuzzy,nlp] @ git+https://github.com/ArchAI-Labs/medha.git
 pip>=25.2
 setuptools==80.9.0
