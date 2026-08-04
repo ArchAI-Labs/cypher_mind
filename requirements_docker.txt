@@ -4,5 +4,5 @@ qdrant-client==1.13.3
 litellm>=1.83.0
 medha[fastembed,fuzzy,nlp] @ git+https://github.com/ArchAI-Labs/medha.git
 pip>=25.2
-setuptools==80.9.0
+setuptools==83.0.0
 wheel>=0.46.2
